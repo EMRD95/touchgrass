@@ -48,6 +48,7 @@ class MenuScene extends Phaser.Scene {
     this.load.on('complete', () => loaderLabel.destroy());
 
     this.load.image('reference', ASSET('reference/grass_touching_simulator.webp'));
+    this.load.image('reference_mobile', ASSET('reference/grass_touching_simulator_mobile.png'));
     this.load.image('grass0', ASSET('tiny-town/grass_0.png'));
     this.load.image('grass1', ASSET('tiny-town/grass_1.png'));
     this.load.image('grass2', ASSET('tiny-town/grass_2.png'));
@@ -62,8 +63,8 @@ class MenuScene extends Phaser.Scene {
     this.load.image('player_walk2', ASSET('characters/player_walk2.png'));
     this.load.image('player_cheer', ASSET('characters/player_cheer.png'));
     this.load.image('player_hurt', ASSET('characters/player_hurt.png'));
-    this.load.image('zombie_walk1', ASSET('characters/zombie_walk1.png'));
-    this.load.image('zombie_walk2', ASSET('characters/zombie_walk2.png'));
+    this.load.image('hermes_walk1', ASSET('characters/hermes_walk1.png'));
+    this.load.image('hermes_walk2', ASSET('characters/hermes_walk2.png'));
     this.load.audio('foot0', ASSET('audio/footstep_grass_000.ogg'));
     this.load.audio('foot1', ASSET('audio/footstep_grass_001.ogg'));
     this.load.audio('touch', ASSET('audio/touch.ogg'));
@@ -74,8 +75,17 @@ class MenuScene extends Phaser.Scene {
     window.__GTS_READY__ = 'menu';
     window.__GTS_MENU_EXACT_IMAGE__ = true;
 
-    const bg = this.add.image(GAME_W / 2, GAME_H / 2, 'reference')
-      .setDisplaySize(GAME_W, GAME_H)
+    const cw = this.scale.width;
+    const ch = this.scale.height;
+    const isPortrait = ch > cw;
+    const bgKey = isPortrait ? 'reference_mobile' : 'reference';
+    const refW = isPortrait ? 941 : GAME_W;
+    const refH = isPortrait ? 1672 : GAME_H;
+
+    // Cover-style: scale image to fill canvas, crop overflow
+    const scale = Math.max(cw / refW, ch / refH);
+    const bg = this.add.image(cw / 2, ch / 2, bgKey)
+      .setDisplaySize(refW * scale, refH * scale)
       .setDepth(0);
 
     // Keep the menu visually identical to the supplied 1376x768 reference image.
@@ -87,6 +97,19 @@ class MenuScene extends Phaser.Scene {
     bg.on('pointerdown', start);
     this.input.keyboard.on('keydown-SPACE', start);
     this.input.keyboard.on('keydown-ENTER', start);
+
+    // Re-cover on resize
+    this.scale.on('resize', (gameSize) => {
+      const p = gameSize.height > gameSize.width;
+      const rw = p ? 941 : GAME_W;
+      const rh = p ? 1672 : GAME_H;
+      const s = Math.max(gameSize.width / rw, gameSize.height / rh);
+      if (bg.texture?.key !== (p ? 'reference_mobile' : 'reference')) {
+        bg.setTexture(p ? 'reference_mobile' : 'reference');
+      }
+      bg.setPosition(gameSize.width / 2, gameSize.height / 2);
+      bg.setDisplaySize(rw * s, rh * s);
+    });
   }
 }
 
@@ -125,7 +148,7 @@ class GameScene extends Phaser.Scene {
     this.player.body.setSize(38, 78).setOffset(21, 28);
 
     this.anims.create({ key: 'player_walk', frames: [{ key: 'player_walk1' }, { key: 'player_walk2' }], frameRate: 7, repeat: -1 });
-    this.anims.create({ key: 'doom_walk', frames: [{ key: 'zombie_walk1' }, { key: 'zombie_walk2' }], frameRate: 5, repeat: -1 });
+    this.anims.create({ key: 'doom_walk', frames: [{ key: 'hermes_walk1' }, { key: 'hermes_walk2' }], frameRate: 5, repeat: -1 });
 
     this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
     this.cameras.main.setDeadzone(80, 60);
@@ -181,27 +204,43 @@ class GameScene extends Phaser.Scene {
   }
 
   createHud() {
+    const cw = this.cameras.main.width;
+    const narrow = cw < 600;
+    const panelW = Math.min(narrow ? cw - 24 : 928, cw - 32);
+    const rowH = narrow ? 36 : 44;
+    const panelH = narrow ? 88 : 86;
+    const font = narrow ? '13px' : '21px';
+    const small = narrow ? '10px' : '13px';
+
     this.hud = this.add.container(0, 0).setScrollFactor(0).setDepth(2000);
-    const panel = this.add.rectangle(16, 16, 928, 86, 0x102013, 0.74)
+    const panel = this.add.rectangle(12, 12, panelW, panelH, 0x102013, 0.74)
       .setOrigin(0, 0)
       .setStrokeStyle(2, 0xf7f0bb, 0.32);
-    this.scoreText = this.add.text(34, 28, '', {
-      fontFamily: 'Inter, sans-serif', fontSize: '21px', fontStyle: '900', color: '#fff2a8',
-      stroke: '#071008', strokeThickness: 4,
+
+    this.scoreText = this.add.text(22, 16, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: font, fontStyle: '900', color: '#fff2a8',
+      stroke: '#071008', strokeThickness: 3,
     });
-    this.timerText = this.add.text(752, 28, '', {
-      fontFamily: 'Inter, sans-serif', fontSize: '21px', fontStyle: '900', color: '#fff2a8',
-      stroke: '#071008', strokeThickness: 4,
+    this.timerText = this.add.text(panelW - 4, 16, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: font, fontStyle: '900', color: '#fff2a8',
+      stroke: '#071008', strokeThickness: 3,
+    }).setOrigin(1, 0);
+
+    const row2y = narrow ? 56 : 62;
+    this.meterLabel = this.add.text(22, row2y, 'chill meter', {
+      fontFamily: 'Inter, sans-serif', fontSize: small, fontStyle: '900', color: '#cfe99d',
     });
-    this.meterLabel = this.add.text(34, 62, 'chill meter', {
-      fontFamily: 'Inter, sans-serif', fontSize: '13px', fontStyle: '900', color: '#cfe99d',
-    });
-    this.meterBg = this.add.rectangle(136, 70, 330, 16, 0x071008, 0.8).setOrigin(0, 0.5);
-    this.meterBar = this.add.rectangle(136, 70, 190, 16, 0x91d969, 1).setOrigin(0, 0.5);
-    this.breathText = this.add.text(505, 62, '', {
-      fontFamily: 'Inter, sans-serif', fontSize: '13px', fontStyle: '900', color: '#f7f0bb',
+    const meterW = narrow ? Math.min(180, panelW - 200) : 330;
+    this.meterBg = this.add.rectangle(narrow ? 100 : 136, row2y + 7, meterW, narrow ? 10 : 16, 0x071008, 0.8).setOrigin(0, 0.5);
+    this.meterBar = this.add.rectangle(narrow ? 100 : 136, row2y + 7, meterW * 0.57, narrow ? 10 : 16, 0x91d969, 1).setOrigin(0, 0.5);
+    this.breathText = this.add.text(narrow ? 100 + meterW + 8 : 475, row2y + 1, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: small, fontStyle: '900', color: '#f7f0bb',
     });
     this.hud.add([panel, this.scoreText, this.timerText, this.meterLabel, this.meterBg, this.meterBar, this.breathText]);
+
+    // Store for refreshes
+    this._meterW = meterW;
+    this._narrow = narrow;
   }
 
   spawnGrass(count = 1) {
@@ -232,9 +271,9 @@ class GameScene extends Phaser.Scene {
 
   spawnDoomGoblin() {
     const { x, y } = this.randomPointAwayFromPlayer(520);
-    const goblin = this.physics.add.sprite(x, y, 'zombie_walk1')
+    const goblin = this.physics.add.sprite(x, y, 'hermes_walk1')
       .setScale(0.55)
-      .setTint(0xa6d88c)
+      .setFlipX(true)
       .setDepth(80)
       .play('doom_walk');
     goblin.body.setSize(38, 72).setOffset(21, 32);
@@ -367,12 +406,18 @@ class GameScene extends Phaser.Scene {
     const remaining = Math.max(0, Math.ceil(this.timeLeft));
     this.scoreText.setText(`grass touched: ${this.score}/${WIN_TOUCHES}   combo: x${Math.max(1, this.combo)}`);
     this.timerText.setText(`outside: ${remaining}s`);
-    const width = Phaser.Math.Clamp(this.chill, 0, 100) * 3.3;
-    this.meterBar.setDisplaySize(width, 16);
+    const chillPct = Phaser.Math.Clamp(this.chill, 0, 100);
+    const barW = (this._meterW || 330) * (chillPct / 100);
+    const barH = this._narrow ? 10 : 16;
+    this.meterBar.setDisplaySize(barW, barH);
     this.meterBar.setFillStyle(this.chill > 55 ? 0x91d969 : this.chill > 25 ? 0xffd36e : 0xff7f6e, 1);
     const breathWait = Math.max(0, (this.breatheReadyAt - this.time.now) / 1000);
-    this.breathText.setText(breathWait > 0 ? `SHIFT breathe cooldown: ${breathWait.toFixed(1)}s` : 'SHIFT breathe: ready');
-    window.__GTS_STATE__ = { score: this.score, chill: Math.round(this.chill), timeLeft: Number(this.timeLeft.toFixed(1)), ended: this.gameEnded };
+    this.breathText.setText(breathWait > 0 ? `${breathWait.toFixed(1)}s` : 'ready');
+    window.__GTS_STATE__ = {
+      score: this.score, chill: Math.round(this.chill),
+      timeLeft: Number(this.timeLeft.toFixed(1)), ended: this.gameEnded,
+      breathReady: breathWait === 0,
+    };
   }
 
   update(time, deltaMs) {
@@ -414,7 +459,10 @@ class GameScene extends Phaser.Scene {
       this.player.stop().setTexture('player_stand');
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.deepBreath();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || window.__GTS_MINPUT__?.breathe) {
+      if (window.__GTS_MINPUT__) window.__GTS_MINPUT__.breathe = false;
+      this.deepBreath();
+    }
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.scene.restart();
 
     this.updateHazards(time);
@@ -435,7 +483,7 @@ class GameScene extends Phaser.Scene {
         goblin.setData('wanderAt', time + Phaser.Math.Between(900, 1800));
         this.randomGoblinVelocity(goblin);
       }
-      goblin.setFlipX(goblin.body.velocity.x < 0);
+      goblin.setFlipX(goblin.body.velocity.x >= 0);
     });
 
     this.phones.getChildren().forEach((phone) => {
@@ -457,21 +505,31 @@ class GameScene extends Phaser.Scene {
     this.cameras.main.stopFollow();
     window.__GTS_STATE__ = { score: this.score, chill: Math.round(this.chill), timeLeft: Number(this.timeLeft.toFixed(1)), ended: true, won };
 
+    const cw = this.cameras.main.width;
+    const ch = this.cameras.main.height;
+    const narrow = cw < 600;
+    const panelW = narrow ? cw - 40 : 690;
+    const panelH = narrow ? 220 : 310;
+    const titleFont = narrow ? '24px' : '42px';
+    const bodyFont = narrow ? '15px' : '22px';
+    const footFont = narrow ? '13px' : '20px';
+    const wrapW = panelW - 60;
+
     const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(5000);
-    overlay.add(this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x071008, 0.78));
-    overlay.add(this.add.rectangle(GAME_W / 2, GAME_H / 2, 690, 310, won ? 0x20371d : 0x351b16, 0.93)
-      .setStrokeStyle(4, won ? 0xfff2a8 : 0xffb38f, 0.9));
-    overlay.add(this.add.text(GAME_W / 2, 207, won ? 'YOU ARE NATURE NOW' : 'GRASS DENIED', {
-      fontFamily: 'Inter, sans-serif', fontSize: '42px', fontStyle: '900', color: won ? '#fff2a8' : '#ffb38f',
-      stroke: '#071008', strokeThickness: 8,
+    overlay.add(this.add.rectangle(cw / 2, ch / 2, cw, ch, 0x071008, 0.78));
+    overlay.add(this.add.rectangle(cw / 2, ch / 2, panelW, panelH, won ? 0x20371d : 0x351b16, 0.93)
+      .setStrokeStyle(narrow ? 3 : 4, won ? 0xfff2a8 : 0xffb38f, 0.9));
+    overlay.add(this.add.text(cw / 2, ch / 2 - panelH * 0.25, won ? 'YOU ARE NATURE NOW' : 'GRASS DENIED', {
+      fontFamily: 'Inter, sans-serif', fontSize: titleFont, fontStyle: '900', color: won ? '#fff2a8' : '#ffb38f',
+      stroke: '#071008', strokeThickness: narrow ? 4 : 8,
     }).setOrigin(0.5));
-    overlay.add(this.add.text(GAME_W / 2, 275, reason, {
-      fontFamily: 'Inter, sans-serif', fontSize: '22px', fontStyle: '800', color: '#f7f0bb', align: 'center',
-      wordWrap: { width: 560 }, stroke: '#071008', strokeThickness: 5,
+    overlay.add(this.add.text(cw / 2, ch / 2 - (narrow ? 10 : 30), reason, {
+      fontFamily: 'Inter, sans-serif', fontSize: bodyFont, fontStyle: '800', color: '#f7f0bb', align: 'center',
+      wordWrap: { width: wrapW }, stroke: '#071008', strokeThickness: narrow ? 3 : 5,
     }).setOrigin(0.5));
-    overlay.add(this.add.text(GAME_W / 2, 345, `final grass touches: ${this.score}/${WIN_TOUCHES}\npress R or click to restart`, {
-      fontFamily: 'Inter, sans-serif', fontSize: '20px', fontStyle: '900', color: '#bde48b', align: 'center', lineSpacing: 6,
-      stroke: '#071008', strokeThickness: 5,
+    overlay.add(this.add.text(cw / 2, ch / 2 + panelH * 0.18, `final grass touches: ${this.score}/${WIN_TOUCHES}\npress R or click to restart`, {
+      fontFamily: 'Inter, sans-serif', fontSize: footFont, fontStyle: '900', color: '#bde48b', align: 'center', lineSpacing: narrow ? 4 : 6,
+      stroke: '#071008', strokeThickness: narrow ? 3 : 5,
     }).setOrigin(0.5));
 
     const restart = () => this.scene.restart();
@@ -496,8 +554,7 @@ const config = {
     },
   },
   scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    mode: Phaser.Scale.RESIZE,
   },
   scene: [MenuScene, GameScene],
 };

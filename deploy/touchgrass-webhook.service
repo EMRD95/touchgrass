@@ -1,0 +1,17 @@
+[Unit]
+Description=TouchGrass Deploy Webhook
+After=network.target
+
+[Service]
+Type=simple
+User=ubu
+WorkingDirectory=/opt/touchgrass
+ExecStart=/usr/bin/node /opt/touchgrass/webhook.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=touchgrass-webhook
+
+[Install]
+WantedBy=multi-user.target

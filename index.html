@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#182b19" />
 
     <title>Grass Touching Simulator</title>
@@ -33,6 +33,41 @@
   <body>
     <div id="game"></div>
     <noscript>This game needs JavaScript because the grass refuses to touch itself.</noscript>
+
+    <button id="btn-breathe" aria-label="Breathe">breathe</button>
+
+    <script>
+      window.__GTS_MINPUT__ = { breathe: false };
+      const breatheBtn = document.getElementById('btn-breathe');
+      if (breatheBtn) {
+        breatheBtn.addEventListener('pointerdown', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          window.__GTS_MINPUT__.breathe = true;
+        });
+        breatheBtn.addEventListener('pointerup', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          window.__GTS_MINPUT__.breathe = false;
+        });
+        // Poll game state to show/hide/gray the button
+        setInterval(() => {
+          const scene = window.__GTS_READY__;
+          const state = window.__GTS_STATE__;
+          if (scene !== 'game' || (state && state.ended)) {
+            breatheBtn.style.display = 'none';
+          } else {
+            breatheBtn.style.display = '';
+            if (state && !state.breathReady) {
+              breatheBtn.style.opacity = '0.35';
+              breatheBtn.style.pointerEvents = 'none';
+            } else {
+              breatheBtn.style.opacity = '';
+              breatheBtn.style.pointerEvents = '';
+            }
+          }
+        }, 300);
+      }
+    </script>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
