@@ -1,0 +1,21 @@
+{
+  "name": "grass-touching-simulator",
+  "version": "1.0.0",
+  "description": "A tiny Phaser/Vite meme game about touching grass and dodging doomscroll goblins.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EMRD95/touchgrass.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "vite": "latest",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {}
+}
