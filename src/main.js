@@ -173,6 +173,33 @@ class GameScene extends Phaser.Scene {
     super('GameScene');
   }
 
+  now() {
+    return this.runTimeMs ?? 0;
+  }
+
+  initializeRunClock(time) {
+    if (this.clockInitialized) return;
+    this.clockInitialized = true;
+    this.lastGrassTouchAt = time;
+    this.invulnerableUntil = time + 3000;
+    this.lastStep = time;
+    this.nextWorldUpdateAt = time;
+    this.nextGrassMaintainAt = time + 900;
+    this.nextThreatMaintainAt = time + 700;
+    this.hermes?.getChildren().forEach((hazard) => {
+      hazard.setData('nextStrategyAt', time + Phaser.Math.Between(9000, 17000));
+      hazard.setData('lungeAt', time + Phaser.Math.Between(1400, 2800));
+      hazard.setData('lungeUntil', 0);
+      hazard.setData('repelledUntil', 0);
+    });
+    this.phones?.getChildren().forEach((hazard) => {
+      hazard.setData('nextStrategyAt', time + Phaser.Math.Between(8000, 15000));
+      hazard.setData('lungeAt', time + Phaser.Math.Between(1200, 2400));
+      hazard.setData('repelledUntil', 0);
+      hazard.setData('retargetAt', 0);
+    });
+  }
+
   create() {
     window.__GTS_READY__ = 'game';
     window.__GTS_SCENE__ = this;
@@ -182,12 +209,14 @@ class GameScene extends Phaser.Scene {
     this.combo = 0;
     this.chill = 76;
     this.survivalTime = 0;
-    this.lastGrassTouchAt = this.time.now;
+    this.runTimeMs = 0;
+    this.clockInitialized = false;
+    this.lastGrassTouchAt = null;
     this.lastMoveAngle = null;
     this.straightRunStartedAt = null;
     this.straightRunSeconds = 0;
     this.lastStep = 0;
-    this.invulnerableUntil = this.time.now + 3000;
+    this.invulnerableUntil = Number.POSITIVE_INFINITY;
     this.breatheReadyAt = 0;
     this.gameEnded = false;
     this.pointerTarget = null;
@@ -332,8 +361,8 @@ class GameScene extends Phaser.Scene {
   }
 
   updateWorldChunks(force = false) {
-    if (!force && this.time.now < this.nextWorldUpdateAt) return;
-    this.nextWorldUpdateAt = this.time.now + 450;
+    if (!force && this.now() < this.nextWorldUpdateAt) return;
+    this.nextWorldUpdateAt = this.now() + 450;
 
     const pcx = Math.floor(this.player.x / CHUNK_SIZE);
     const pcy = Math.floor(this.player.y / CHUNK_SIZE);
@@ -404,7 +433,7 @@ class GameScene extends Phaser.Scene {
     );
   }
 
-  getNoGrassSeconds(time = this.time?.now ?? 0) {
+  getNoGrassSeconds(time = this.now()) {
     const lastTouch = this.lastGrassTouchAt ?? time;
     return Math.max(0, (time - lastTouch - GRASS_TOUCH_GRACE_MS) / 1000);
   }
@@ -434,12 +463,12 @@ class GameScene extends Phaser.Scene {
     this.straightRunSeconds = Math.max(0, (time - (this.straightRunStartedAt ?? time) - STRAIGHT_GRACE_MS) / 1000);
   }
 
-  getStraightRunSeconds(time = this.time?.now ?? 0) {
+  getStraightRunSeconds(time = this.now()) {
     if (this.straightRunStartedAt == null) return 0;
     return Math.max(this.straightRunSeconds ?? 0, (time - this.straightRunStartedAt - STRAIGHT_GRACE_MS) / 1000);
   }
 
-  getChillDrainRate(time = this.time?.now ?? 0) {
+  getChillDrainRate(time = this.now()) {
     const pressure = this.getPressure();
     const noGrassSeconds = this.getNoGrassSeconds(time);
     const straightSeconds = this.getStraightRunSeconds(time);
@@ -506,7 +535,7 @@ class GameScene extends Phaser.Scene {
   }
 
   randomGrassPointAroundPlayer(minDistance = 420, maxDistance = 1200) {
-    const straightSeconds = this.getStraightRunSeconds(this.time?.now ?? 0);
+    const straightSeconds = this.getStraightRunSeconds(this.now());
     const avoidAngle = typeof this.lastMoveAngle === 'number' && straightSeconds > 0.6 ? this.lastMoveAngle : null;
     let fallback = null;
     for (let i = 0; i < 8; i += 1) {
@@ -546,9 +575,9 @@ class GameScene extends Phaser.Scene {
     hermes.setData('side', Phaser.Math.RND.pick([-1, 1]));
     hermes.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
     hermes.setData('orbitRadius', Phaser.Math.Between(210, 360));
-    hermes.setData('nextStrategyAt', this.time.now + Phaser.Math.Between(9000, 17000));
+    hermes.setData('nextStrategyAt', this.now() + Phaser.Math.Between(9000, 17000));
     hermes.setData('wanderAt', 0);
-    hermes.setData('lungeAt', this.time.now + Phaser.Math.Between(1400, 2800));
+    hermes.setData('lungeAt', this.now() + Phaser.Math.Between(1400, 2800));
     hermes.setData('lungeUntil', 0);
     hermes.setData('repelledUntil', 0);
     hermes.setData('moveAngle', Phaser.Math.Angle.Between(hermes.x, hermes.y, this.player.x, this.player.y));
@@ -576,9 +605,9 @@ class GameScene extends Phaser.Scene {
     phone.setData('side', Phaser.Math.RND.pick([-1, 1]));
     phone.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
     phone.setData('orbitRadius', Phaser.Math.Between(180, 320));
-    phone.setData('nextStrategyAt', this.time.now + Phaser.Math.Between(8000, 15000));
+    phone.setData('nextStrategyAt', this.now() + Phaser.Math.Between(8000, 15000));
     phone.setData('retargetAt', 0);
-    phone.setData('lungeAt', this.time.now + Phaser.Math.Between(1200, 2400));
+    phone.setData('lungeAt', this.now() + Phaser.Math.Between(1200, 2400));
     phone.setData('repelledUntil', 0);
     phone.setData('moveAngle', Phaser.Math.Angle.Between(phone.x, phone.y, this.player.x, this.player.y));
     phone.setData('idleMoveAngle', null);
@@ -790,8 +819,8 @@ class GameScene extends Phaser.Scene {
     const dx = hazard.x - this.player.x;
     const dy = hazard.y - this.player.y;
     const len = Math.max(1, Math.hypot(dx, dy));
-    hazard.setData('repelledUntil', this.time.now + duration);
-    hazard.setData('retargetAt', this.time.now + duration + 120);
+    hazard.setData('repelledUntil', this.now() + duration);
+    hazard.setData('retargetAt', this.now() + duration + 120);
     hazard.setData('lungeUntil', 0);
     hazard.body.setVelocity((dx / len) * force, (dy / len) * force);
   }
@@ -800,7 +829,7 @@ class GameScene extends Phaser.Scene {
     if (!tuft.active || tuft.getData('picked') || this.gameEnded) return;
     tuft.setData('picked', true);
     this.score += 1;
-    this.lastGrassTouchAt = this.time.now;
+    this.lastGrassTouchAt = this.now();
     this.combo = Math.min(this.combo + 1, 99);
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.chill = Math.min(100, this.chill + 5.2 + Math.min(8, this.combo * 0.45));
@@ -834,12 +863,12 @@ class GameScene extends Phaser.Scene {
 
   takeDamage(kind, hazard) {
     if (this.gameEnded) return;
-    if (this.time.now < this.invulnerableUntil) {
+    if (this.now() < this.invulnerableUntil) {
       this.repelHazard(hazard, 340, 520);
       return;
     }
     const pressure = this.getPressure();
-    this.invulnerableUntil = this.time.now + Math.max(560, 940 - pressure * 4.2);
+    this.invulnerableUntil = this.now() + Math.max(560, 940 - pressure * 4.2);
     this.combo = 0;
     const damage = kind === 'phone' ? 12.8 + pressure * 0.065 : 11.5 + pressure * 0.06;
     this.chill = Math.max(0, this.chill - damage);
@@ -854,10 +883,10 @@ class GameScene extends Phaser.Scene {
   }
 
   deepBreath() {
-    if (this.gameEnded || this.time.now < this.breatheReadyAt) return;
+    if (this.gameEnded || this.now() < this.breatheReadyAt) return;
     const pressure = this.getPressure();
-    this.breatheReadyAt = this.time.now + Math.max(6800, 8600 - pressure * 6);
-    this.invulnerableUntil = Math.max(this.invulnerableUntil, this.time.now + 320);
+    this.breatheReadyAt = this.now() + Math.max(6800, 8600 - pressure * 6);
+    this.invulnerableUntil = Math.max(this.invulnerableUntil, this.now() + 320);
     this.chill = Math.min(100, this.chill + 8);
     this.combo = Math.min(99, this.combo + 1);
     this.bestCombo = Math.max(this.bestCombo, this.combo);
@@ -904,7 +933,7 @@ class GameScene extends Phaser.Scene {
     const barH = this._narrow ? 10 : 16;
     this.meterBar.setDisplaySize(barW, barH);
     this.meterBar.setFillStyle(this.chill > 55 ? 0x91d969 : this.chill > 25 ? 0xffd36e : 0xff7f6e, 1);
-    const breathWait = Math.max(0, (this.breatheReadyAt - this.time.now) / 1000);
+    const breathWait = Math.max(0, (this.breatheReadyAt - this.now()) / 1000);
     const breathLabel = this._narrow
       ? (breathWait > 0 ? `${breathWait.toFixed(1)}s` : 'ready')
       : (breathWait > 0 ? `ctrl breathe ${breathWait.toFixed(1)}s` : 'ctrl/breathe ready');
@@ -919,9 +948,9 @@ class GameScene extends Phaser.Scene {
       survived: Number(this.survivalTime.toFixed(1)),
       playerSpeed: Math.round(this.playerSpeed),
       threatSpeed: Math.round(this.getThreatSpeed()),
-      noGrassSeconds: Number(this.getNoGrassSeconds(this.time.now).toFixed(1)),
-      straightRunSeconds: Number(this.getStraightRunSeconds(this.time.now).toFixed(1)),
-      chillDrainRate: Number(this.getChillDrainRate(this.time.now).toFixed(2)),
+      noGrassSeconds: Number(this.getNoGrassSeconds(this.now()).toFixed(1)),
+      straightRunSeconds: Number(this.getStraightRunSeconds(this.now()).toFixed(1)),
+      chillDrainRate: Number(this.getChillDrainRate(this.now()).toFixed(2)),
       hermes: this.hermes?.getLength() ?? 0,
       phones: this.phones?.getLength() ?? 0,
       chunks: this.chunks?.size ?? 0,
@@ -972,7 +1001,14 @@ class GameScene extends Phaser.Scene {
 
   update(time, deltaMs) {
     if (this.gameEnded) return;
-    const dt = deltaMs / 1000;
+    if (!this.clockInitialized) {
+      this.initializeRunClock(0);
+      deltaMs = Math.min(deltaMs, 16.67);
+    }
+    const clampedDeltaMs = Math.min(deltaMs, 50);
+    this.runTimeMs += clampedDeltaMs;
+    time = this.now();
+    const dt = clampedDeltaMs / 1000;
     this.survivalTime += dt;
     const pressure = this.getPressure();
     this.playerSpeed = this.getPlayerSpeed();
