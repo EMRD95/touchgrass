@@ -49,7 +49,7 @@ const HAZARD_MEMES = [
   'HERMES SWARM DAMAGE',
 ];
 
-const ASSET = (path) => `assets/${path}`;
+const ASSET = (path) => `assets/${path}?v=3`;
 
 function formatDuration(totalSeconds) {
   const safe = Math.max(0, Math.floor(totalSeconds));
