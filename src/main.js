@@ -252,7 +252,7 @@ class GameScene extends Phaser.Scene {
     this.phones = this.physics.add.group({ allowGravity: false });
 
     this.updateWorldChunks(true);
-    this.spawnGrass(STARTING_GRASS, 450, 1700);
+    this.spawnGrass(STARTING_GRASS, 180, 1800);
     for (let i = 0; i < 5; i += 1) this.spawnHermes();
     for (let i = 0; i < 4; i += 1) this.spawnPhone();
 
@@ -850,7 +850,7 @@ class GameScene extends Phaser.Scene {
     });
 
     const pressure = this.getPressure();
-    this.spawnGrass(2 + (pressure > 50 ? 1 : 0), 500, 1800);
+    this.spawnGrass(2 + (pressure > 50 ? 1 : 0), 200, 1900);
     if (this.score % 4 === 0) this.spawnHermes();
     if (this.score % 5 === 0) this.spawnPhone();
     if (this.score % 12 === 0) {
@@ -968,9 +968,9 @@ class GameScene extends Phaser.Scene {
       const d = Phaser.Math.Distance.Between(tuft.x, tuft.y, this.player.x, this.player.y);
       if (d > maxDistance) tuft.destroy();
     });
-    const target = Math.min(MAX_GRASS, STARTING_GRASS + Math.floor(this.score / 16) + Math.floor(this.survivalTime / 55));
+    const target = Math.min(MAX_GRASS, STARTING_GRASS + Math.floor(this.score / 8) + Math.floor(this.survivalTime / 25));
     const missing = Math.max(0, target - this.grass.getLength());
-    if (missing > 0) this.spawnGrass(missing, 550, 2000);
+    if (missing > 0) this.spawnGrass(missing, 220, 2000);
   }
 
   maintainThreatLevel(time) {
