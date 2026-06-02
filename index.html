@@ -46,16 +46,20 @@
         });
         breatheBtn.addEventListener('pointerup', (e) => {
           e.preventDefault(); e.stopPropagation();
-          window.__GTS_MINPUT__.breathe = false;
+        });
+        breatheBtn.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          window.__GTS_MINPUT__.breathe = true;
         });
         // Poll game state to show/hide/gray the button
         setInterval(() => {
           const scene = window.__GTS_READY__;
           const state = window.__GTS_STATE__;
+          breatheBtn.textContent = 'Breathe';
           if (scene !== 'game' || (state && state.ended)) {
             breatheBtn.style.display = 'none';
           } else {
-            breatheBtn.style.display = '';
+            breatheBtn.style.display = 'block';
             if (state && !state.breathReady) {
               breatheBtn.style.opacity = '0.35';
               breatheBtn.style.pointerEvents = 'none';

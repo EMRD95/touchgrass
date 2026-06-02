@@ -3,9 +3,29 @@ import './style.css';
 
 const GAME_W = 1376;
 const GAME_H = 768;
-const WORLD_W = 2200;
-const WORLD_H = 1400;
-const WIN_TOUCHES = 30;
+const CHUNK_SIZE = 900;
+const CHUNK_RADIUS = 2;
+const CHUNK_CULL_RADIUS = 3;
+const STARTING_GRASS = 18;
+const MAX_GRASS = 36;
+const MAX_HERMES = 64;
+const MAX_PHONES = 68;
+const PLAYER_BASE_SPEED = 225;
+const PLAYER_SPEED_PER_SCORE = 1.45;
+const PLAYER_SPEED_PER_SECOND = 0.21;
+const PLAYER_SPEED_CAP = 560;
+const BREATHE_CORE_RADIUS = 210;
+const BREATHE_OUTER_RADIUS = 390;
+const BREATHE_FORCE = 360;
+const BREATHE_REPEL_MS = 430;
+const GRASS_TOUCH_GRACE_MS = 750;
+const NO_GRASS_DRAIN_PER_SEC = 1.05;
+const NO_GRASS_DRAIN_CAP = 8.5;
+const STRAIGHT_GRACE_MS = 1100;
+const STRAIGHT_ANGLE_EPS = 0.24;
+const STRAIGHT_DRAIN_PER_SEC = 0.82;
+const STRAIGHT_DRAIN_CAP = 5.6;
+const RESTART_LOCK_MS = 2500;
 
 const MEMES = [
   'PHOTOSYNTHESIS +1',
@@ -21,14 +41,53 @@ const MEMES = [
 ];
 
 const HAZARD_MEMES = [
-  'DOOMSCROLL DAMAGE',
   'PHONE AGGRO',
+  'HERMES HAS LOCKED ON',
   'ALGORITHM CRIT!',
-  'INDOOR GOBLIN BITES',
   'NOTIFICATION PARALYSIS',
+  'THE TIMELINE BITES BACK',
+  'HERMES SWARM DAMAGE',
 ];
 
 const ASSET = (path) => `assets/${path}`;
+
+function formatDuration(totalSeconds) {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function chunkSeed(cx, cy) {
+  let h = 0x811c9dc5;
+  h = Math.imul(h ^ (cx | 0), 0x01000193);
+  h = Math.imul(h ^ (cy | 0), 0x01000193);
+  h = Math.imul(h ^ 0x9e3779b9, 0x01000193);
+  return h >>> 0;
+}
+
+function seededRng(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randFloat(rng, min, max) {
+  return min + rng() * (max - min);
+}
+
+function randInt(rng, min, max) {
+  return Math.floor(randFloat(rng, min, max + 1));
+}
+
+function randPick(rng, values) {
+  return values[Math.floor(rng() * values.length) % values.length];
+}
 
 class MenuScene extends Phaser.Scene {
   constructor() {
@@ -82,14 +141,11 @@ class MenuScene extends Phaser.Scene {
     const refW = isPortrait ? 941 : GAME_W;
     const refH = isPortrait ? 1672 : GAME_H;
 
-    // Cover-style: scale image to fill canvas, crop overflow
     const scale = Math.max(cw / refW, ch / refH);
     const bg = this.add.image(cw / 2, ch / 2, bgKey)
       .setDisplaySize(refW * scale, refH * scale)
       .setDepth(0);
 
-    // Keep the menu visually identical to the supplied 1376x768 reference image.
-    // Interaction is deliberately invisible: the image itself is the UI.
     bg.setInteractive({ useHandCursor: true });
     this.input.setDefaultCursor('pointer');
 
@@ -98,7 +154,6 @@ class MenuScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-SPACE', start);
     this.input.keyboard.on('keydown-ENTER', start);
 
-    // Re-cover on resize
     this.scale.on('resize', (gameSize) => {
       const p = gameSize.height > gameSize.width;
       const rw = p ? 941 : GAME_W;
@@ -120,52 +175,64 @@ class GameScene extends Phaser.Scene {
 
   create() {
     window.__GTS_READY__ = 'game';
+    window.__GTS_SCENE__ = this;
+
     this.score = 0;
-    this.chill = 82;
-    this.timeLeft = 90;
+    this.bestCombo = 0;
     this.combo = 0;
+    this.chill = 76;
+    this.survivalTime = 0;
+    this.lastGrassTouchAt = this.time.now;
+    this.lastMoveAngle = null;
+    this.straightRunStartedAt = null;
+    this.straightRunSeconds = 0;
     this.lastStep = 0;
-    this.invulnerableUntil = this.time.now + 20000;
+    this.invulnerableUntil = this.time.now + 3000;
     this.breatheReadyAt = 0;
     this.gameEnded = false;
     this.pointerTarget = null;
+    this.nextWorldUpdateAt = 0;
+    this.nextGrassMaintainAt = 0;
+    this.nextThreatMaintainAt = 0;
+    this.playerSpeed = PLAYER_BASE_SPEED;
+    this.chunks = new Map();
 
-    this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
-    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+    // Bodies are not clamped to a finite arena. The grassland streams around the player.
+    this.physics.world.setBounds(-100000000, -100000000, 200000000, 200000000);
 
-    this.add.tileSprite(WORLD_W / 2, WORLD_H / 2, WORLD_W, WORLD_H, 'grass0').setDepth(-50);
-    this.add.tileSprite(WORLD_W / 2, WORLD_H / 2, WORLD_W, WORLD_H, 'grass1')
-      .setAlpha(0.18).setDepth(-49).setTilePosition(7, 11);
-    this.add.tileSprite(WORLD_W / 2, WORLD_H / 2, WORLD_W, WORLD_H, 'grass2')
-      .setAlpha(0.12).setDepth(-48).setTilePosition(17, 3);
+    this.createInfiniteBackdrop();
 
-    this.decorateWorld();
-
-    this.player = this.physics.add.sprite(WORLD_W / 2, WORLD_H / 2, 'player_stand')
+    this.player = this.physics.add.sprite(0, 0, 'player_stand')
       .setScale(0.62)
       .setDepth(90)
-      .setCollideWorldBounds(true);
+      .setCollideWorldBounds(false);
     this.player.body.setSize(38, 78).setOffset(21, 28);
 
-    this.anims.create({ key: 'player_walk', frames: [{ key: 'player_walk1' }, { key: 'player_walk2' }], frameRate: 7, repeat: -1 });
-    this.anims.create({ key: 'doom_walk', frames: [{ key: 'hermes_walk1' }, { key: 'hermes_walk2' }], frameRate: 5, repeat: -1 });
+    if (!this.anims.exists('player_walk')) {
+      this.anims.create({ key: 'player_walk', frames: [{ key: 'player_walk1' }, { key: 'player_walk2' }], frameRate: 7, repeat: -1 });
+    }
+    if (!this.anims.exists('hermes_walk')) {
+      this.anims.create({ key: 'hermes_walk', frames: [{ key: 'hermes_walk1' }, { key: 'hermes_walk2' }], frameRate: 6, repeat: -1 });
+    }
 
     this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
     this.cameras.main.setDeadzone(80, 60);
 
     this.grass = this.physics.add.group({ allowGravity: false, immovable: true });
-    this.hazards = this.physics.add.group({ allowGravity: false });
+    this.hermes = this.physics.add.group({ allowGravity: false });
     this.phones = this.physics.add.group({ allowGravity: false });
 
-    this.spawnGrass(20);
-    for (let i = 0; i < 4; i += 1) this.spawnDoomGoblin();
-    for (let i = 0; i < 3; i += 1) this.spawnPhone();
+    this.updateWorldChunks(true);
+    this.spawnGrass(STARTING_GRASS, 190, 1080);
+    for (let i = 0; i < 5; i += 1) this.spawnHermes();
+    for (let i = 0; i < 4; i += 1) this.spawnPhone();
 
     this.physics.add.overlap(this.player, this.grass, (_, tuft) => this.collectGrass(tuft));
-    this.physics.add.overlap(this.player, this.hazards, (_, hazard) => this.takeDamage('goblin', hazard));
+    this.physics.add.overlap(this.player, this.hermes, (_, hazard) => this.takeDamage('hermes', hazard));
     this.physics.add.overlap(this.player, this.phones, (_, hazard) => this.takeDamage('phone', hazard));
 
     this.keys = this.input.keyboard.addKeys('W,A,S,D,SHIFT,R,SPACE');
+    this.ctrlKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
     this.cursors = this.input.keyboard.createCursorKeys();
     this.input.on('pointerdown', (pointer) => {
       if (this.gameEnded) return;
@@ -174,40 +241,120 @@ class GameScene extends Phaser.Scene {
       this.floatText(worldPoint.x, worldPoint.y - 30, 'going outside...', '#f7f0bb', 16);
     });
 
+    this.scale.on('resize', this.handleResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', this.handleResize, this);
+      if (window.__GTS_SCENE__ === this) window.__GTS_SCENE__ = null;
+    });
+
     this.createHud();
-    this.floatText(this.player.x, this.player.y - 80, 'TOUCH GRASS TO BEGIN HEALING', '#fff2a8', 18);
+    this.floatText(this.player.x, this.player.y - 80, 'INFINITE GRASS. INFINITE CONSEQUENCES.', '#fff2a8', 18);
     this.refreshHud();
   }
 
-  decorateWorld() {
+  createInfiniteBackdrop() {
+    const cw = this.scale.width;
+    const ch = this.scale.height;
+    this.backdropLayers = [
+      this.add.tileSprite(0, 0, cw, ch, 'grass0').setOrigin(0).setScrollFactor(0).setDepth(-80).setData('scrollScale', 1),
+      this.add.tileSprite(0, 0, cw, ch, 'grass1').setOrigin(0).setScrollFactor(0).setDepth(-79).setAlpha(0.18).setData('scrollScale', 1.05).setData('offsetX', 7).setData('offsetY', 11),
+      this.add.tileSprite(0, 0, cw, ch, 'grass2').setOrigin(0).setScrollFactor(0).setDepth(-78).setAlpha(0.12).setData('scrollScale', 0.94).setData('offsetX', 17).setData('offsetY', 3),
+    ];
+    this.scrollBackdrop();
+  }
+
+  scrollBackdrop() {
+    if (!this.backdropLayers) return;
+    const cam = this.cameras.main;
+    this.backdropLayers.forEach((layer) => {
+      const scale = layer.getData('scrollScale') ?? 1;
+      const ox = layer.getData('offsetX') ?? 0;
+      const oy = layer.getData('offsetY') ?? 0;
+      layer.tilePositionX = cam.scrollX * scale + ox;
+      layer.tilePositionY = cam.scrollY * scale + oy;
+    });
+  }
+
+  resizeBackdrop(gameSize = this.scale) {
+    if (!this.backdropLayers) return;
+    this.backdropLayers.forEach((layer) => layer.setSize(gameSize.width, gameSize.height));
+    this.scrollBackdrop();
+  }
+
+  handleResize(gameSize) {
+    this.resizeBackdrop(gameSize);
+    if (this.hud) {
+      this.hud.destroy(true);
+      this.hud = null;
+      this.createHud();
+      this.refreshHud();
+    }
+  }
+
+  createChunk(cx, cy) {
+    const key = `${cx},${cy}`;
+    if (this.chunks.has(key)) return;
+
+    const rng = seededRng(chunkSeed(cx, cy));
+    const x0 = cx * CHUNK_SIZE;
+    const y0 = cy * CHUNK_SIZE;
+    const objects = [];
     const decoKeys = ['flowers', 'grass1', 'grass2', 'path'];
-    for (let i = 0; i < 360; i += 1) {
-      const key = Phaser.Math.RND.pick(decoKeys);
+    const decoCount = randInt(rng, 18, 32);
+
+    for (let i = 0; i < decoCount; i += 1) {
+      const decoKey = randPick(rng, decoKeys);
       const img = this.add.image(
-        Phaser.Math.Between(30, WORLD_W - 30),
-        Phaser.Math.Between(30, WORLD_H - 30),
-        key,
-      ).setDepth(Phaser.Math.Between(-30, 10));
-      img.setScale(key === 'path' ? Phaser.Math.FloatBetween(1.4, 2.6) : Phaser.Math.FloatBetween(1.1, 2.2));
-      img.setAlpha(key === 'path' ? 0.35 : Phaser.Math.FloatBetween(0.28, 0.9));
-      img.setAngle(Phaser.Math.Between(0, 3) * 90);
+        x0 + randFloat(rng, 20, CHUNK_SIZE - 20),
+        y0 + randFloat(rng, 20, CHUNK_SIZE - 20),
+        decoKey,
+      ).setDepth(randInt(rng, -45, 8));
+      img.setScale(decoKey === 'path' ? randFloat(rng, 1.35, 2.7) : randFloat(rng, 1.0, 2.25));
+      img.setAlpha(decoKey === 'path' ? randFloat(rng, 0.18, 0.42) : randFloat(rng, 0.22, 0.86));
+      img.setAngle(randInt(rng, 0, 3) * 90);
+      objects.push(img);
     }
 
-    this.trees = this.physics.add.staticGroup();
-    for (let i = 0; i < 75; i += 1) {
-      const key = Phaser.Math.RND.pick(['tree0', 'tree1', 'tree2']);
-      const tree = this.trees.create(Phaser.Math.Between(70, WORLD_W - 70), Phaser.Math.Between(70, WORLD_H - 70), key);
-      tree.setScale(Phaser.Math.FloatBetween(2.4, 3.8)).setDepth(tree.y / 10);
-      tree.refreshBody();
-      tree.body.setSize(14, 11).setOffset(1, 5);
+    const treeCount = randInt(rng, 3, 8);
+    for (let i = 0; i < treeCount; i += 1) {
+      const tree = this.add.image(
+        x0 + randFloat(rng, 45, CHUNK_SIZE - 45),
+        y0 + randFloat(rng, 45, CHUNK_SIZE - 45),
+        randPick(rng, ['tree0', 'tree1', 'tree2']),
+      ).setDepth(42);
+      tree.setScale(randFloat(rng, 2.2, 3.8));
+      tree.setAlpha(randFloat(rng, 0.82, 1));
+      tree.setAngle(randInt(rng, -2, 2));
+      objects.push(tree);
     }
+
+    this.chunks.set(key, { cx, cy, objects });
+  }
+
+  updateWorldChunks(force = false) {
+    if (!force && this.time.now < this.nextWorldUpdateAt) return;
+    this.nextWorldUpdateAt = this.time.now + 450;
+
+    const pcx = Math.floor(this.player.x / CHUNK_SIZE);
+    const pcy = Math.floor(this.player.y / CHUNK_SIZE);
+    for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx += 1) {
+      for (let dy = -CHUNK_RADIUS; dy <= CHUNK_RADIUS; dy += 1) {
+        this.createChunk(pcx + dx, pcy + dy);
+      }
+    }
+
+    this.chunks.forEach((chunk, key) => {
+      if (Math.abs(chunk.cx - pcx) > CHUNK_CULL_RADIUS || Math.abs(chunk.cy - pcy) > CHUNK_CULL_RADIUS) {
+        chunk.objects.forEach((obj) => obj.destroy());
+        this.chunks.delete(key);
+      }
+    });
   }
 
   createHud() {
     const cw = this.cameras.main.width;
     const narrow = cw < 600;
     const panelW = Math.min(narrow ? cw - 24 : 928, cw - 32);
-    const rowH = narrow ? 36 : 44;
     const panelH = narrow ? 88 : 86;
     const font = narrow ? '13px' : '21px';
     const small = narrow ? '10px' : '13px';
@@ -227,30 +374,120 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(1, 0);
 
     const row2y = narrow ? 56 : 62;
-    this.meterLabel = this.add.text(22, row2y, 'chill meter', {
+    this.meterLabel = this.add.text(22, row2y, 'chill', {
       fontFamily: 'Inter, sans-serif', fontSize: small, fontStyle: '900', color: '#cfe99d',
     });
-    const meterW = narrow ? Math.min(180, panelW - 200) : 330;
-    this.meterBg = this.add.rectangle(narrow ? 100 : 136, row2y + 7, meterW, narrow ? 10 : 16, 0x071008, 0.8).setOrigin(0, 0.5);
-    this.meterBar = this.add.rectangle(narrow ? 100 : 136, row2y + 7, meterW * 0.57, narrow ? 10 : 16, 0x91d969, 1).setOrigin(0, 0.5);
-    this.breathText = this.add.text(narrow ? 100 + meterW + 8 : 475, row2y + 1, '', {
+    const meterX = narrow ? 68 : 92;
+    const meterW = narrow ? Math.max(74, Math.min(160, panelW - 198)) : 330;
+    this.meterBg = this.add.rectangle(meterX, row2y + 7, meterW, narrow ? 10 : 16, 0x071008, 0.8).setOrigin(0, 0.5);
+    this.meterBar = this.add.rectangle(meterX, row2y + 7, meterW * 0.57, narrow ? 10 : 16, 0x91d969, 1).setOrigin(0, 0.5);
+    this.breathText = this.add.text(meterX + meterW + 8, row2y + 1, '', {
       fontFamily: 'Inter, sans-serif', fontSize: small, fontStyle: '900', color: '#f7f0bb',
     });
-    this.hud.add([panel, this.scoreText, this.timerText, this.meterLabel, this.meterBg, this.meterBar, this.breathText]);
+    this.swarmText = this.add.text(panelW - 8, row2y + 1, '', {
+      fontFamily: 'Inter, sans-serif', fontSize: small, fontStyle: '900', color: '#ffb38f',
+    }).setOrigin(1, 0);
+    this.hud.add([panel, this.scoreText, this.timerText, this.meterLabel, this.meterBg, this.meterBar, this.breathText, this.swarmText]);
 
-    // Store for refreshes
     this._meterW = meterW;
     this._narrow = narrow;
   }
 
-  spawnGrass(count = 1) {
-    for (let i = 0; i < count; i += 1) {
+  getPressure() {
+    return this.score * 0.42 + this.survivalTime * 0.055;
+  }
+
+  getPlayerSpeed() {
+    return Math.min(
+      PLAYER_SPEED_CAP,
+      PLAYER_BASE_SPEED + this.score * PLAYER_SPEED_PER_SCORE + this.survivalTime * PLAYER_SPEED_PER_SECOND,
+    );
+  }
+
+  getNoGrassSeconds(time = this.time?.now ?? 0) {
+    const lastTouch = this.lastGrassTouchAt ?? time;
+    return Math.max(0, (time - lastTouch - GRASS_TOUCH_GRACE_MS) / 1000);
+  }
+
+  updateStraightRun(time, vx, vy) {
+    if (Math.hypot(vx, vy) <= 0.01) {
+      this.lastMoveAngle = null;
+      this.straightRunStartedAt = null;
+      this.straightRunSeconds = 0;
+      return;
+    }
+    const angle = Math.atan2(vy, vx);
+    if (typeof this.lastMoveAngle !== 'number') {
+      this.lastMoveAngle = angle;
+      this.straightRunStartedAt = time;
+      this.straightRunSeconds = 0;
+      return;
+    }
+    const turn = Math.abs(Phaser.Math.Angle.Wrap(angle - this.lastMoveAngle));
+    if (turn > STRAIGHT_ANGLE_EPS) {
+      this.lastMoveAngle = angle;
+      this.straightRunStartedAt = time;
+      this.straightRunSeconds = 0;
+      return;
+    }
+    this.lastMoveAngle = Phaser.Math.Angle.RotateTo(this.lastMoveAngle, angle, 0.05);
+    this.straightRunSeconds = Math.max(0, (time - (this.straightRunStartedAt ?? time) - STRAIGHT_GRACE_MS) / 1000);
+  }
+
+  getStraightRunSeconds(time = this.time?.now ?? 0) {
+    if (this.straightRunStartedAt == null) return 0;
+    return Math.max(this.straightRunSeconds ?? 0, (time - this.straightRunStartedAt - STRAIGHT_GRACE_MS) / 1000);
+  }
+
+  getChillDrainRate(time = this.time?.now ?? 0) {
+    const pressure = this.getPressure();
+    const noGrassSeconds = this.getNoGrassSeconds(time);
+    const straightSeconds = this.getStraightRunSeconds(time);
+    const baseline = 0.95 + pressure * 0.018;
+    const noGrassPenalty = Math.min(NO_GRASS_DRAIN_CAP, noGrassSeconds * NO_GRASS_DRAIN_PER_SEC);
+    const straightPenalty = Math.min(STRAIGHT_DRAIN_CAP, straightSeconds * STRAIGHT_DRAIN_PER_SEC);
+    return baseline + noGrassPenalty + straightPenalty;
+  }
+
+  capThreatSpeed(speed, ratio = 0.94) {
+    const playerSpeed = this.playerSpeed || this.getPlayerSpeed();
+    return Math.min(speed, Math.max(90, playerSpeed * ratio));
+  }
+
+  getThreatSpeed() {
+    const pressure = this.getPressure();
+    const ratio = Math.min(0.972, 0.905 + pressure * 0.0023);
+    return this.capThreatSpeed(215 + pressure * 4.45, ratio);
+  }
+
+  getHermesSpeed() {
+    return this.getThreatSpeed();
+  }
+
+  getPhoneSpeed() {
+    return this.getThreatSpeed();
+  }
+
+  targetHermesCount() {
+    return Math.min(MAX_HERMES, 5 + Math.floor(this.score / 5) + Math.floor(this.survivalTime / 16));
+  }
+
+  targetPhoneCount() {
+    return Math.min(MAX_PHONES, 4 + Math.floor(this.score / 5) + Math.floor(this.survivalTime / 18));
+  }
+
+  spawnGrass(count = 1, minDistance = 130, maxDistance = 980) {
+    const room = Math.max(0, MAX_GRASS - this.grass.getLength());
+    const toSpawn = Math.min(count, room);
+    for (let i = 0; i < toSpawn; i += 1) {
+      const { x, y } = this.randomGrassPointAroundPlayer(minDistance, maxDistance);
       const key = Phaser.Math.RND.pick(['tuft_0', 'tuft_1', 'tuft_2', 'tuft_3']);
-      const tuft = this.physics.add.image(Phaser.Math.Between(80, WORLD_W - 80), Phaser.Math.Between(110, WORLD_H - 80), key)
+      const tuft = this.physics.add.image(x, y, key)
         .setScale(Phaser.Math.FloatBetween(0.036, 0.058))
         .setTint(Phaser.Math.RND.pick([0x74c857, 0x93d867, 0xb7e66f, 0x5eac48]))
         .setDepth(45)
         .setAlpha(0.96);
+      tuft.body.setAllowGravity(false);
       tuft.body.setSize(560, 460, true);
       tuft.setData('picked', false);
       this.grass.add(tuft);
@@ -258,67 +495,320 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  randomPointAwayFromPlayer(minDistance = 420) {
-    const cx = this.player?.x ?? WORLD_W / 2;
-    const cy = this.player?.y ?? WORLD_H / 2;
-    for (let i = 0; i < 80; i += 1) {
-      const x = Phaser.Math.Between(120, WORLD_W - 120);
-      const y = Phaser.Math.Between(120, WORLD_H - 120);
-      if (Phaser.Math.Distance.Between(x, y, cx, cy) >= minDistance) return { x, y };
-    }
-    return { x: Phaser.Math.Between(120, WORLD_W - 120), y: Phaser.Math.Between(120, WORLD_H - 120) };
+  randomPointAroundPlayer(minDistance = 420, maxDistance = 1200) {
+    const cx = this.player?.x ?? 0;
+    const cy = this.player?.y ?? 0;
+    const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    const inner = minDistance * minDistance;
+    const outer = maxDistance * maxDistance;
+    const radius = Math.sqrt(Phaser.Math.FloatBetween(inner, outer));
+    return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
   }
 
-  spawnDoomGoblin() {
-    const { x, y } = this.randomPointAwayFromPlayer(520);
-    const goblin = this.physics.add.sprite(x, y, 'hermes_walk1')
-      .setScale(0.55)
+  randomGrassPointAroundPlayer(minDistance = 420, maxDistance = 1200) {
+    const straightSeconds = this.getStraightRunSeconds(this.time?.now ?? 0);
+    const avoidAngle = typeof this.lastMoveAngle === 'number' && straightSeconds > 0.6 ? this.lastMoveAngle : null;
+    let fallback = null;
+    for (let i = 0; i < 8; i += 1) {
+      const p = this.randomPointAroundPlayer(minDistance, maxDistance);
+      fallback = fallback ?? p;
+      if (avoidAngle == null || !this.player) return p;
+      const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, p.x, p.y);
+      const delta = Math.abs(Phaser.Math.Angle.Wrap(angle - avoidAngle));
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, p.x, p.y);
+      // When the player holds one direction, stop feeding a perfect grass lane.
+      // Grass still exists, but it tends to appear in side pockets that require turning.
+      if (!(delta < 0.52 && dist < maxDistance * 0.92)) return p;
+    }
+    return fallback ?? this.randomPointAroundPlayer(minDistance, maxDistance);
+  }
+
+  randomSpawnPointNearEdge(extraMin = 0) {
+    const cam = this.cameras.main;
+    const minDistance = Math.max(430 + extraMin, Math.max(cam.width, cam.height) * 0.58);
+    const maxDistance = minDistance + 560;
+    return this.randomPointAroundPlayer(minDistance, maxDistance);
+  }
+
+  spawnHermes() {
+    if (this.hermes.getLength() >= MAX_HERMES) return;
+    const { x, y } = this.randomSpawnPointNearEdge(80);
+    const pressure = this.getPressure();
+    const strategy = Phaser.Math.RND.pick(['chaser', 'flanker', 'flanker', 'ambusher', 'herder']);
+    const hermes = this.physics.add.sprite(x, y, 'hermes_walk1')
+      .setScale(0.55 + Math.min(0.16, pressure / 720))
       .setFlipX(true)
       .setDepth(80)
-      .play('doom_walk');
-    goblin.body.setSize(38, 72).setOffset(21, 32);
-    goblin.setBounce(1, 1).setCollideWorldBounds(true);
-    goblin.setData('wanderAt', 0);
-    goblin.setData('label', Phaser.Math.RND.pick(['chronically online', 'reply guy', 'tab hoarder', 'indoor goblin']));
-    this.randomGoblinVelocity(goblin);
-    this.hazards.add(goblin);
+      .play('hermes_walk');
+    hermes.body.setAllowGravity(false);
+    hermes.body.setSize(38, 72).setOffset(21, 32);
+    hermes.setData('strategy', strategy);
+    hermes.setData('side', Phaser.Math.RND.pick([-1, 1]));
+    hermes.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
+    hermes.setData('orbitRadius', Phaser.Math.Between(210, 360));
+    hermes.setData('nextStrategyAt', this.time.now + Phaser.Math.Between(9000, 17000));
+    hermes.setData('wanderAt', 0);
+    hermes.setData('lungeAt', this.time.now + Phaser.Math.Between(1400, 2800));
+    hermes.setData('lungeUntil', 0);
+    hermes.setData('repelledUntil', 0);
+    hermes.setData('moveAngle', Phaser.Math.Angle.Between(hermes.x, hermes.y, this.player.x, this.player.y));
+    hermes.setData('idleMoveAngle', null);
+    hermes.setData('idleMoveAngleRefreshAt', 0);
+    this.aimHazardAtPlayer(hermes, this.getThreatSpeed(), 0.45);
+    this.hermes.add(hermes);
   }
 
   spawnPhone() {
-    const { x, y } = this.randomPointAwayFromPlayer(460);
+    if (this.phones.getLength() >= MAX_PHONES) return;
+    const { x, y } = this.randomSpawnPointNearEdge(40);
+    const pressure = this.getPressure();
+    const strategy = Phaser.Math.RND.pick(['homing', 'sweeper', 'sweeper', 'orbiter', 'cutoff']);
     const phone = this.add.text(x, y, '📱', {
       fontFamily: 'Inter, sans-serif',
-      fontSize: '34px',
+      fontSize: `${Math.min(42, 34 + pressure * 0.035)}px`,
       stroke: '#071008',
       strokeThickness: 5,
     }).setOrigin(0.5).setDepth(100);
     this.physics.add.existing(phone);
+    phone.body.setAllowGravity(false);
     phone.body.setSize(34, 34, true);
-    phone.body.setCollideWorldBounds(true).setBounce(1, 1);
-    phone.body.setVelocity(Phaser.Math.Between(-80, 80), Phaser.Math.Between(-80, 80));
-    phone.setData('wanderAt', 0);
+    phone.setData('strategy', strategy);
+    phone.setData('side', Phaser.Math.RND.pick([-1, 1]));
+    phone.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
+    phone.setData('orbitRadius', Phaser.Math.Between(180, 320));
+    phone.setData('nextStrategyAt', this.time.now + Phaser.Math.Between(8000, 15000));
+    phone.setData('retargetAt', 0);
+    phone.setData('lungeAt', this.time.now + Phaser.Math.Between(1200, 2400));
+    phone.setData('repelledUntil', 0);
+    phone.setData('moveAngle', Phaser.Math.Angle.Between(phone.x, phone.y, this.player.x, this.player.y));
+    phone.setData('idleMoveAngle', null);
+    phone.setData('idleMoveAngleRefreshAt', 0);
+    this.aimHazardAtPlayer(phone, this.getThreatSpeed(), 0.5);
     this.phones.add(phone);
     this.tweens.add({ targets: phone, angle: 14, scaleX: 1.16, scaleY: 1.16, duration: 520, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
   }
 
-  randomGoblinVelocity(goblin) {
-    const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    const speed = Phaser.Math.Between(55, 105);
-    goblin.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+  aimHazardAtPlayer(hazard, speed, jitter = 0) {
+    if (!hazard?.body || !this.player) return;
+    const target = Phaser.Math.Angle.Between(hazard.x, hazard.y, this.player.x, this.player.y) + Phaser.Math.FloatBetween(-jitter, jitter);
+    hazard.body.setVelocity(Math.cos(target) * speed, Math.sin(target) * speed);
+  }
+
+  moveHazardToward(hazard, target, speed) {
+    if (!hazard?.body) return;
+    const dx = target.x - hazard.x;
+    const dy = target.y - hazard.y;
+    const targetDist = Math.max(1, Math.hypot(dx, dy));
+    let rawAngle = Math.atan2(dy, dx);
+    const playerDist = this.player
+      ? Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y)
+      : targetDist;
+
+    // If a strategic side/cutoff target is already reached, do not snap left/right
+    // every frame. Glide toward the player and smooth the turn instead.
+    if (targetDist < 58 && playerDist > 92 && this.player) {
+      rawAngle = Phaser.Math.Angle.Between(hazard.x, hazard.y, this.player.x, this.player.y);
+    }
+
+    const previous = hazard.getData('moveAngle');
+    const angle = typeof previous === 'number'
+      ? Phaser.Math.Angle.RotateTo(previous, rawAngle, 0.16)
+      : rawAngle;
+    hazard.setData('moveAngle', angle);
+    hazard.body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+  }
+
+  getPlayerMoveIntent(hazard, time) {
+    const vx = this.player?.body?.velocity?.x ?? 0;
+    const vy = this.player?.body?.velocity?.y ?? 0;
+    if (Math.hypot(vx, vy) > 12) {
+      if (hazard) hazard.setData('idleMoveAngle', null);
+      return { angle: Math.atan2(vy, vx), moving: true };
+    }
+    if (this.pointerTarget) {
+      const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.pointerTarget.x, this.pointerTarget.y);
+      if (dist > 32) {
+        if (hazard) hazard.setData('idleMoveAngle', null);
+        return { angle: Phaser.Math.Angle.Between(this.player.x, this.player.y, this.pointerTarget.x, this.pointerTarget.y), moving: true };
+      }
+    }
+    if (!hazard) return { angle: this.player?.flipX ? Math.PI : 0, moving: false };
+
+    let idleAngle = hazard.getData('idleMoveAngle');
+    const refreshAt = hazard.getData('idleMoveAngleRefreshAt') ?? 0;
+    if (typeof idleAngle !== 'number' || time > refreshAt) {
+      idleAngle = Phaser.Math.Angle.Between(hazard.x, hazard.y, this.player.x, this.player.y);
+      hazard.setData('idleMoveAngle', idleAngle);
+      hazard.setData('idleMoveAngleRefreshAt', time + Phaser.Math.Between(1800, 3200));
+    }
+    return { angle: idleAngle, moving: false };
+  }
+
+  rotateThreatStrategy(hazard, strategies, time) {
+    if (time <= (hazard.getData('nextStrategyAt') ?? 0)) return;
+    hazard.setData('strategy', Phaser.Math.RND.pick(strategies));
+    hazard.setData('side', Phaser.Math.RND.pick([-1, 1]));
+    hazard.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
+    hazard.setData('idleMoveAngle', null);
+    hazard.setData('idleMoveAngleRefreshAt', 0);
+    hazard.setData('nextStrategyAt', time + Phaser.Math.Between(9000, 18000));
+  }
+
+  getGrassRouteNodes(limit = 18) {
+    if (!this.grass || !this.player) return [];
+    const px = this.player.x;
+    const py = this.player.y;
+    return this.grass.getChildren()
+      .filter((tuft) => tuft.active && !tuft.getData('picked'))
+      .map((tuft) => ({
+        x: tuft.x,
+        y: tuft.y,
+        tuft,
+        dist: Phaser.Math.Distance.Between(px, py, tuft.x, tuft.y),
+      }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, limit);
+  }
+
+  getLikelyGrassTarget(time) {
+    const nodes = this.getGrassRouteNodes(20);
+    if (nodes.length === 0) return null;
+    const intent = this.getPlayerMoveIntent(null, time);
+    let best = null;
+    nodes.forEach((node) => {
+      const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, node.x, node.y);
+      const forward = intent.moving ? Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(angle - intent.angle))) : 0;
+      const straightTrap = typeof this.lastMoveAngle === 'number'
+        ? Math.max(0, Math.cos(Phaser.Math.Angle.Wrap(angle - this.lastMoveAngle))) * Math.min(220, this.getStraightRunSeconds(time) * 70)
+        : 0;
+      const score = node.dist - forward * 190 - straightTrap;
+      if (!best || score < best.score) best = { ...node, score };
+    });
+    return best;
+  }
+
+  getRouteContext(hazard, time) {
+    const grassTarget = this.getLikelyGrassTarget(time);
+    const intent = this.getPlayerMoveIntent(hazard, time);
+    const px = this.player.x;
+    const py = this.player.y;
+    const routeAngle = grassTarget
+      ? Phaser.Math.Angle.Between(px, py, grassTarget.x, grassTarget.y)
+      : intent.angle;
+    const fx = Math.cos(routeAngle);
+    const fy = Math.sin(routeAngle);
+    const side = hazard.getData('side') ?? 1;
+    const sx = -fy * side;
+    const sy = fx * side;
+    const routeDistance = grassTarget ? grassTarget.dist : 760;
+    const leadDistance = Math.min(routeDistance, (this.playerSpeed || this.getPlayerSpeed()) * (1.1 + Math.min(1.25, this.getPressure() / 95)));
+    const lead = { x: px + fx * leadDistance, y: py + fy * leadDistance };
+    const goal = grassTarget ? { x: grassTarget.x, y: grassTarget.y } : lead;
+    const routeNodes = [0.28, 0.46, 0.64, 0.82, 1].map((t) => ({
+      x: px + fx * routeDistance * t,
+      y: py + fy * routeDistance * t,
+      routeT: t,
+    }));
+    this.getGrassRouteNodes(10).forEach((node) => routeNodes.push({ x: node.x, y: node.y, routeT: 1, grass: true }));
+    return { grassTarget, intent, px, py, fx, fy, sx, sy, routeDistance, lead, goal, routeNodes };
+  }
+
+  chooseGraphCutNode(hazard, route, sideOffset = 0) {
+    const threatSpeed = Math.max(1, this.getThreatSpeed());
+    const playerSpeed = Math.max(1, this.playerSpeed || this.getPlayerSpeed());
+    const goal = route.goal;
+    let best = null;
+    route.routeNodes.forEach((node) => {
+      const candidates = [node];
+      if (sideOffset !== 0) candidates.push({ x: node.x + route.sx * sideOffset, y: node.y + route.sy * sideOffset, routeT: node.routeT });
+      candidates.forEach((candidate) => {
+        const playerDist = Phaser.Math.Distance.Between(route.px, route.py, candidate.x, candidate.y);
+        const threatDist = Phaser.Math.Distance.Between(hazard.x, hazard.y, candidate.x, candidate.y);
+        const playerEta = playerDist / playerSpeed;
+        const threatEta = threatDist / threatSpeed;
+        const latePenalty = Math.max(0, threatEta - playerEta) * 320;
+        const timingScore = Math.abs(threatEta - playerEta) * 115;
+        const goalScore = Phaser.Math.Distance.Between(candidate.x, candidate.y, goal.x, goal.y) * 0.09;
+        const aheadBonus = (candidate.routeT ?? 0.5) * 95;
+        const score = latePenalty + timingScore + goalScore - aheadBonus;
+        if (!best || score < best.score) best = { ...candidate, score, playerEta, threatEta };
+      });
+    });
+    return best ?? route.lead;
+  }
+
+  getThreatTarget(hazard, kind, time) {
+    const pressure = this.getPressure();
+    const strategy = hazard.getData('strategy') ?? (kind === 'phone' ? 'homing' : 'chaser');
+    const phase = hazard.getData('phase') ?? 0;
+    const route = this.getRouteContext(hazard, time);
+    const intent = route.intent;
+    const idleScale = intent.moving ? 1 : 0.42;
+    const wiggle = Math.sin(time / (intent.moving ? 720 : 1500) + phase) * idleScale;
+    const sideOffset = 160 + Math.min(185, pressure * 1.65);
+    const cut = this.chooseGraphCutNode(hazard, route, 0);
+    hazard.setData('graphTargetX', Math.round(cut.x));
+    hazard.setData('graphTargetY', Math.round(cut.y));
+    hazard.setData('graphPlayerEta', Number((cut.playerEta ?? 0).toFixed(2)));
+    hazard.setData('graphThreatEta', Number((cut.threatEta ?? 0).toFixed(2)));
+
+    if (kind === 'phone') {
+      if (strategy === 'sweeper') {
+        const sweep = this.chooseGraphCutNode(hazard, route, sideOffset * 0.95);
+        return { x: sweep.x - route.fx * 60, y: sweep.y - route.fy * 60 };
+      }
+      if (strategy === 'orbiter') {
+        const orbit = hazard.getData('orbitRadius') ?? 260;
+        const anchor = route.grassTarget ?? route.lead;
+        return { x: anchor.x + route.sx * orbit + route.fx * wiggle * 95, y: anchor.y + route.sy * orbit + route.fy * wiggle * 95 };
+      }
+      if (strategy === 'cutoff') {
+        const cutoff = this.chooseGraphCutNode(hazard, route, sideOffset * 0.55);
+        return { x: cutoff.x + route.sx * wiggle * 90, y: cutoff.y + route.sy * wiggle * 90 };
+      }
+      // Homing phones still chase, but they lead the route toward the next grass.
+      return { x: route.lead.x + route.sx * wiggle * 45, y: route.lead.y + route.sy * wiggle * 45 };
+    }
+
+    if (strategy === 'flanker') {
+      const flank = this.chooseGraphCutNode(hazard, route, sideOffset);
+      return { x: flank.x - route.fx * 75, y: flank.y - route.fy * 75 };
+    }
+    if (strategy === 'ambusher') {
+      const ambush = this.chooseGraphCutNode(hazard, route, sideOffset * 0.35);
+      return { x: ambush.x + route.fx * 60 + route.sx * wiggle * 70, y: ambush.y + route.fy * 60 + route.sy * wiggle * 70 };
+    }
+    if (strategy === 'herder') {
+      // Herding ghosts aim behind the route so the player gets pushed toward the cutoff ghosts.
+      return { x: route.px - route.fx * 110 + route.sx * (sideOffset * 0.55 + wiggle * 75), y: route.py - route.fy * 110 + route.sy * (sideOffset * 0.55 + wiggle * 75) };
+    }
+    return { x: route.lead.x + route.sx * wiggle * 32, y: route.lead.y + route.sy * wiggle * 32 };
+  }
+
+  repelHazard(hazard, force = 320, duration = 420) {
+    if (!hazard?.body) return;
+    const dx = hazard.x - this.player.x;
+    const dy = hazard.y - this.player.y;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    hazard.setData('repelledUntil', this.time.now + duration);
+    hazard.setData('retargetAt', this.time.now + duration + 120);
+    hazard.setData('lungeUntil', 0);
+    hazard.body.setVelocity((dx / len) * force, (dy / len) * force);
   }
 
   collectGrass(tuft) {
     if (!tuft.active || tuft.getData('picked') || this.gameEnded) return;
     tuft.setData('picked', true);
     this.score += 1;
-    this.combo = Math.min(this.combo + 1, 9);
-    this.chill = Math.min(100, this.chill + 7 + this.combo * 0.6);
-    this.timeLeft = Math.min(99, this.timeLeft + 0.8);
+    this.lastGrassTouchAt = this.time.now;
+    this.combo = Math.min(this.combo + 1, 99);
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
+    this.chill = Math.min(100, this.chill + 5.2 + Math.min(8, this.combo * 0.45));
     this.sound.play('touch', { volume: 0.25, detune: Phaser.Math.Between(-200, 250) });
 
     const msg = Phaser.Math.RND.pick(MEMES);
-    this.floatText(tuft.x, tuft.y - 38, `${msg}\ncombo x${this.combo}`, '#fff2a8', 16 + this.combo);
-    this.cameras.main.flash(90, 194, 237, 117, false);
+    this.floatText(tuft.x, tuft.y - 38, `${msg}\ncombo x${this.combo}`, '#fff2a8', 16 + Math.min(this.combo, 10));
+    this.cameras.main.flash(80, 194, 237, 117, false);
 
     this.tweens.add({
       targets: tuft,
@@ -329,54 +819,57 @@ class GameScene extends Phaser.Scene {
       ease: 'Back.in',
       onComplete: () => tuft.destroy(),
     });
-    this.spawnGrass(1);
 
-    if (this.score % 7 === 0) this.spawnDoomGoblin();
-    if (this.score % 11 === 0) this.spawnPhone();
-    if (this.score >= WIN_TOUCHES) this.endGame(true, 'YOU TOUCHED ENOUGH GRASS TO BECOME REAL');
+    const pressure = this.getPressure();
+    this.spawnGrass(1 + (pressure > 70 && this.score % 5 === 0 ? 1 : 0), 280, 1380);
+    if (this.score % 4 === 0) this.spawnHermes();
+    if (this.score % 5 === 0) this.spawnPhone();
+    if (this.score % 12 === 0) {
+      this.spawnHermes();
+      this.spawnPhone();
+      this.floatText(this.player.x, this.player.y - 110, 'THE SWARM ESCALATES', '#ffb38f', 22);
+    }
     this.refreshHud();
-  }
-
-  repelHazard(hazard, force = 320) {
-    if (!hazard?.body) return;
-    const dx = hazard.x - this.player.x;
-    const dy = hazard.y - this.player.y;
-    const len = Math.max(1, Math.hypot(dx, dy));
-    hazard.body.setVelocity((dx / len) * force, (dy / len) * force);
   }
 
   takeDamage(kind, hazard) {
     if (this.gameEnded) return;
     if (this.time.now < this.invulnerableUntil) {
-      this.repelHazard(hazard, 240);
+      this.repelHazard(hazard, 340, 520);
       return;
     }
-    this.invulnerableUntil = this.time.now + 1250;
+    const pressure = this.getPressure();
+    this.invulnerableUntil = this.time.now + Math.max(560, 940 - pressure * 4.2);
     this.combo = 0;
-    this.chill = Math.max(0, this.chill - (kind === 'phone' ? 13 : 10));
+    const damage = kind === 'phone' ? 12.8 + pressure * 0.065 : 11.5 + pressure * 0.06;
+    this.chill = Math.max(0, this.chill - damage);
     this.sound.play('hit', { volume: 0.28 });
     this.player.setTexture('player_hurt').setTint(0xffb5a8);
-    this.cameras.main.shake(170, 0.008);
+    this.cameras.main.shake(170, 0.008 + Math.min(0.012, pressure / 15000));
     this.floatText(this.player.x, this.player.y - 90, Phaser.Math.RND.pick(HAZARD_MEMES), '#ffb38f', 21);
-    if (hazard?.body) this.repelHazard(hazard, 320);
+    if (hazard?.body) this.repelHazard(hazard, 285 + pressure * 0.85, 360);
     this.time.delayedCall(170, () => this.player.clearTint());
-    if (this.chill <= 0) this.endGame(false, 'THE ALGORITHM DRAGGED YOU BACK INSIDE');
+    if (this.chill <= 0) this.endGame(false, 'THE PHONE + HERMES SWARM FINALLY CAUGHT YOU');
     this.refreshHud();
   }
 
   deepBreath() {
     if (this.gameEnded || this.time.now < this.breatheReadyAt) return;
-    this.breatheReadyAt = this.time.now + 6500;
-    this.chill = Math.min(100, this.chill + 16);
-    this.combo = Math.min(9, this.combo + 1);
-    this.floatText(this.player.x, this.player.y - 92, 'INHALE... EXHALE...\nDOOMSCROLL PUSHBACK', '#b9f28e', 20);
-    const ring = this.add.circle(this.player.x, this.player.y, 28, 0xb9f28e, 0.14).setStrokeStyle(3, 0xf7f0bb, 0.8).setDepth(70);
-    this.tweens.add({ targets: ring, radius: 210, alpha: 0, duration: 650, ease: 'Sine.out', onComplete: () => ring.destroy() });
-    [...this.hazards.getChildren(), ...this.phones.getChildren()].forEach((hazard) => {
-      const dx = hazard.x - this.player.x;
-      const dy = hazard.y - this.player.y;
-      const len = Math.max(1, Math.hypot(dx, dy));
-      if (len < 250 && hazard.body) hazard.body.setVelocity((dx / len) * 250, (dy / len) * 250);
+    const pressure = this.getPressure();
+    this.breatheReadyAt = this.time.now + Math.max(6800, 8600 - pressure * 6);
+    this.invulnerableUntil = Math.max(this.invulnerableUntil, this.time.now + 320);
+    this.chill = Math.min(100, this.chill + 8);
+    this.combo = Math.min(99, this.combo + 1);
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
+    this.floatText(this.player.x, this.player.y - 92, 'INHALE... EXHALE...\nSMALL OPENING', '#b9f28e', 20);
+    const ring = this.add.circle(this.player.x, this.player.y, 24, 0xb9f28e, 0.11).setStrokeStyle(3, 0xf7f0bb, 0.72).setDepth(70);
+    this.tweens.add({ targets: ring, radius: BREATHE_OUTER_RADIUS, alpha: 0, duration: 480, ease: 'Sine.out', onComplete: () => ring.destroy() });
+    [...this.hermes.getChildren(), ...this.phones.getChildren()].forEach((hazard) => {
+      if (!hazard.body) return;
+      const dist = Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y);
+      if (dist > BREATHE_OUTER_RADIUS) return;
+      const falloff = dist <= BREATHE_CORE_RADIUS ? 1 : 1 - ((dist - BREATHE_CORE_RADIUS) / (BREATHE_OUTER_RADIUS - BREATHE_CORE_RADIUS)) * 0.75;
+      this.repelHazard(hazard, BREATHE_FORCE * falloff, BREATHE_REPEL_MS);
     });
     this.refreshHud();
   }
@@ -403,28 +896,90 @@ class GameScene extends Phaser.Scene {
   }
 
   refreshHud() {
-    const remaining = Math.max(0, Math.ceil(this.timeLeft));
-    this.scoreText.setText(`grass touched: ${this.score}/${WIN_TOUCHES}   combo: x${Math.max(1, this.combo)}`);
-    this.timerText.setText(`outside: ${remaining}s`);
+    if (!this.scoreText || !this.timerText || !this.meterBar) return;
+    this.scoreText.setText(`score: ${this.score}   combo: x${Math.max(1, this.combo)}`);
+    this.timerText.setText(`survived: ${formatDuration(this.survivalTime)}`);
     const chillPct = Phaser.Math.Clamp(this.chill, 0, 100);
     const barW = (this._meterW || 330) * (chillPct / 100);
     const barH = this._narrow ? 10 : 16;
     this.meterBar.setDisplaySize(barW, barH);
     this.meterBar.setFillStyle(this.chill > 55 ? 0x91d969 : this.chill > 25 ? 0xffd36e : 0xff7f6e, 1);
     const breathWait = Math.max(0, (this.breatheReadyAt - this.time.now) / 1000);
-    this.breathText.setText(breathWait > 0 ? `${breathWait.toFixed(1)}s` : 'ready');
+    const breathLabel = this._narrow
+      ? (breathWait > 0 ? `${breathWait.toFixed(1)}s` : 'ready')
+      : (breathWait > 0 ? `ctrl breathe ${breathWait.toFixed(1)}s` : 'ctrl/breathe ready');
+    this.breathText.setText(breathLabel);
+    const hermesCount = this.hermes?.getLength() ?? 0;
+    const phoneCount = this.phones?.getLength() ?? 0;
+    this.swarmText.setText(this._narrow ? `⚠ ${hermesCount + phoneCount}` : `swarm: ${hermesCount}+${phoneCount}`);
     window.__GTS_STATE__ = {
-      score: this.score, chill: Math.round(this.chill),
-      timeLeft: Number(this.timeLeft.toFixed(1)), ended: this.gameEnded,
-      breathReady: breathWait === 0,
+      score: this.score,
+      bestCombo: this.bestCombo,
+      chill: Math.round(this.chill),
+      survived: Number(this.survivalTime.toFixed(1)),
+      playerSpeed: Math.round(this.playerSpeed),
+      threatSpeed: Math.round(this.getThreatSpeed()),
+      noGrassSeconds: Number(this.getNoGrassSeconds(this.time.now).toFixed(1)),
+      straightRunSeconds: Number(this.getStraightRunSeconds(this.time.now).toFixed(1)),
+      chillDrainRate: Number(this.getChillDrainRate(this.time.now).toFixed(2)),
+      hermes: this.hermes?.getLength() ?? 0,
+      phones: this.phones?.getLength() ?? 0,
+      chunks: this.chunks?.size ?? 0,
+      ended: this.gameEnded,
+      breathReady: breathWait <= 0,
     };
+  }
+
+  maintainGrassField(time) {
+    if (time < this.nextGrassMaintainAt) return;
+    this.nextGrassMaintainAt = time + 900;
+    const maxDistance = 1850;
+    this.grass.getChildren().forEach((tuft) => {
+      if (!tuft.active) return;
+      const d = Phaser.Math.Distance.Between(tuft.x, tuft.y, this.player.x, this.player.y);
+      if (d > maxDistance) tuft.destroy();
+    });
+    const target = Math.min(MAX_GRASS, STARTING_GRASS + Math.floor(this.score / 16) + Math.floor(this.survivalTime / 55));
+    const missing = Math.max(0, target - this.grass.getLength());
+    if (missing > 0) this.spawnGrass(missing, 320, 1480);
+  }
+
+  maintainThreatLevel(time) {
+    if (time < this.nextThreatMaintainAt) return;
+    const pressure = this.getPressure();
+    this.nextThreatMaintainAt = time + Math.max(280, 980 - pressure * 12);
+
+    const despawnDistance = 2500 + Math.min(760, pressure * 13);
+    this.hermes.getChildren().forEach((hazard) => {
+      if (Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y) > despawnDistance) hazard.destroy();
+    });
+    this.phones.getChildren().forEach((hazard) => {
+      if (Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y) > despawnDistance) hazard.destroy();
+    });
+
+    const burst = 1 + Math.floor(Math.min(5, pressure / 27));
+    let budget = burst;
+    while (this.hermes.getLength() < this.targetHermesCount() && budget > 0) {
+      this.spawnHermes();
+      budget -= 1;
+    }
+    budget = burst;
+    while (this.phones.getLength() < this.targetPhoneCount() && budget > 0) {
+      this.spawnPhone();
+      budget -= 1;
+    }
   }
 
   update(time, deltaMs) {
     if (this.gameEnded) return;
     const dt = deltaMs / 1000;
-    this.timeLeft -= dt;
-    this.chill = Math.max(0, this.chill - dt * 0.35);
+    this.survivalTime += dt;
+    const pressure = this.getPressure();
+    this.playerSpeed = this.getPlayerSpeed();
+
+    this.scrollBackdrop();
+    this.updateWorldChunks();
+    this.maintainGrassField(time);
 
     const left = this.cursors.left.isDown || this.keys.A.isDown;
     const right = this.cursors.right.isDown || this.keys.D.isDown;
@@ -447,10 +1002,11 @@ class GameScene extends Phaser.Scene {
     if (vx !== 0 || vy !== 0) {
       const len = Math.hypot(vx, vy);
       vx /= len; vy /= len;
-      this.player.setVelocity(vx * 230, vy * 230);
+      this.player.setVelocity(vx * this.playerSpeed, vy * this.playerSpeed);
       this.player.setFlipX(vx < -0.05);
       if (!this.player.anims.isPlaying || this.player.anims.currentAnim?.key !== 'player_walk') this.player.play('player_walk');
-      if (time - this.lastStep > 250) {
+      this.player.anims.timeScale = Math.min(2.4, 1 + (this.playerSpeed - PLAYER_BASE_SPEED) / 240);
+      if (time - this.lastStep > Math.max(130, 250 - (this.playerSpeed - PLAYER_BASE_SPEED) * 0.35)) {
         this.lastStep = time;
         this.sound.play(Phaser.Math.RND.pick(['foot0', 'foot1']), { volume: 0.045, detune: Phaser.Math.Between(-80, 80) });
       }
@@ -459,41 +1015,78 @@ class GameScene extends Phaser.Scene {
       this.player.stop().setTexture('player_stand');
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || window.__GTS_MINPUT__?.breathe) {
+    this.updateStraightRun(time, vx, vy);
+    this.chill = Math.max(0, this.chill - dt * this.getChillDrainRate(time));
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || Phaser.Input.Keyboard.JustDown(this.ctrlKey) || window.__GTS_MINPUT__?.breathe) {
       if (window.__GTS_MINPUT__) window.__GTS_MINPUT__.breathe = false;
       this.deepBreath();
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.scene.restart();
 
     this.updateHazards(time);
+    this.maintainThreatLevel(time);
 
-    if (this.timeLeft <= 0) this.endGame(this.score >= 18, this.score >= 18 ? 'YOU SURVIVED A WHOLE OUTSIDE SESSION' : 'TOUCHING GRASS REMAINS ON THE ROADMAP');
-    if (this.chill <= 0) this.endGame(false, 'CHILL METER EMPTY: BACK TO THE CHAIR');
+    if (this.chill <= 0) this.endGame(false, 'CHILL METER EMPTY: THE SWARM DRAGGED YOU BACK INSIDE');
     this.refreshHud();
   }
 
   updateHazards(time) {
-    this.hazards.getChildren().forEach((goblin) => {
-      if (!goblin.body) return;
-      const d = Phaser.Math.Distance.Between(goblin.x, goblin.y, this.player.x, this.player.y);
-      const chaseRange = this.score < 3 ? 170 : 320;
-      if (d < chaseRange) {
-        this.physics.moveToObject(goblin, this.player, 56 + this.score * 1.8);
-      } else if (time > goblin.getData('wanderAt')) {
-        goblin.setData('wanderAt', time + Phaser.Math.Between(900, 1800));
-        this.randomGoblinVelocity(goblin);
+    const pressure = this.getPressure();
+    const threatSpeed = this.getThreatSpeed();
+
+    this.hermes.getChildren().forEach((hermes) => {
+      if (!hermes.body) return;
+      const d = Phaser.Math.Distance.Between(hermes.x, hermes.y, this.player.x, this.player.y);
+      if (d > 3400) {
+        hermes.destroy();
+        return;
       }
-      goblin.setFlipX(goblin.body.velocity.x >= 0);
+
+      if (time < (hermes.getData('repelledUntil') ?? 0)) {
+        hermes.setFlipX(hermes.body.velocity.x >= 0);
+        return;
+      }
+
+      this.rotateThreatStrategy(hermes, ['chaser', 'flanker', 'flanker', 'ambusher', 'herder'], time);
+      if (time > hermes.getData('lungeAt')) {
+        hermes.setData('lungeAt', time + Math.max(900, Phaser.Math.Between(1900, 3200) - pressure * 8));
+        hermes.setData('lungeUntil', time + Math.min(520, 220 + pressure * 4.5));
+      }
+      const lunging = time < hermes.getData('lungeUntil');
+      const target = lunging ? { x: this.player.x, y: this.player.y } : this.getThreatTarget(hermes, 'hermes', time);
+      this.moveHazardToward(hermes, target, threatSpeed);
+      hermes.setFlipX(hermes.body.velocity.x >= 0);
+      hermes.anims.timeScale = Math.min(2.8, 1 + pressure / 62);
     });
 
     this.phones.getChildren().forEach((phone) => {
       if (!phone.body) return;
-      if (time > phone.getData('wanderAt')) {
-        phone.setData('wanderAt', time + Phaser.Math.Between(950, 1500));
-        const target = Phaser.Math.Angle.Between(phone.x, phone.y, this.player.x, this.player.y) + Phaser.Math.FloatBetween(-0.7, 0.7);
-        const speed = Phaser.Math.Between(60, 125);
-        phone.body.setVelocity(Math.cos(target) * speed, Math.sin(target) * speed);
+      const d = Phaser.Math.Distance.Between(phone.x, phone.y, this.player.x, this.player.y);
+      if (d > 3500) {
+        phone.destroy();
+        return;
       }
+
+      if (time < (phone.getData('repelledUntil') ?? 0)) return;
+
+      this.rotateThreatStrategy(phone, ['homing', 'sweeper', 'sweeper', 'orbiter', 'cutoff'], time);
+      if (time > phone.getData('lungeAt')) {
+        phone.setData('lungeAt', time + Math.max(760, Phaser.Math.Between(1500, 2900) - pressure * 7));
+        phone.setData('retargetAt', 0);
+      }
+      if (time > phone.getData('retargetAt')) {
+        const interval = Math.max(240, 900 - pressure * 5.4);
+        phone.setData('retargetAt', time + interval);
+        const target = this.getThreatTarget(phone, 'phone', time);
+        phone.setData('targetX', target.x);
+        phone.setData('targetY', target.y);
+      }
+      const target = {
+        x: phone.getData('targetX') ?? this.player.x,
+        y: phone.getData('targetY') ?? this.player.y,
+      };
+      this.moveHazardToward(phone, target, threatSpeed);
     });
   }
 
@@ -501,15 +1094,23 @@ class GameScene extends Phaser.Scene {
     if (this.gameEnded) return;
     this.gameEnded = true;
     this.physics.pause();
-    this.player.setTexture(won ? 'player_cheer' : 'player_hurt');
+    this.player.setTexture('player_hurt');
     this.cameras.main.stopFollow();
-    window.__GTS_STATE__ = { score: this.score, chill: Math.round(this.chill), timeLeft: Number(this.timeLeft.toFixed(1)), ended: true, won };
+    window.__GTS_STATE__ = {
+      score: this.score,
+      bestCombo: this.bestCombo,
+      chill: Math.round(this.chill),
+      survived: Number(this.survivalTime.toFixed(1)),
+      ended: true,
+      won: false,
+      breathReady: false,
+    };
 
     const cw = this.cameras.main.width;
     const ch = this.cameras.main.height;
     const narrow = cw < 600;
-    const panelW = narrow ? cw - 40 : 690;
-    const panelH = narrow ? 220 : 310;
+    const panelW = narrow ? cw - 40 : 720;
+    const panelH = narrow ? 250 : 330;
     const titleFont = narrow ? '24px' : '42px';
     const bodyFont = narrow ? '15px' : '22px';
     const footFont = narrow ? '13px' : '20px';
@@ -517,24 +1118,30 @@ class GameScene extends Phaser.Scene {
 
     const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(5000);
     overlay.add(this.add.rectangle(cw / 2, ch / 2, cw, ch, 0x071008, 0.78));
-    overlay.add(this.add.rectangle(cw / 2, ch / 2, panelW, panelH, won ? 0x20371d : 0x351b16, 0.93)
-      .setStrokeStyle(narrow ? 3 : 4, won ? 0xfff2a8 : 0xffb38f, 0.9));
-    overlay.add(this.add.text(cw / 2, ch / 2 - panelH * 0.25, won ? 'YOU ARE NATURE NOW' : 'GRASS DENIED', {
-      fontFamily: 'Inter, sans-serif', fontSize: titleFont, fontStyle: '900', color: won ? '#fff2a8' : '#ffb38f',
+    overlay.add(this.add.rectangle(cw / 2, ch / 2, panelW, panelH, 0x351b16, 0.93)
+      .setStrokeStyle(narrow ? 3 : 4, 0xffb38f, 0.9));
+    overlay.add(this.add.text(cw / 2, ch / 2 - panelH * 0.29, 'SWARMED', {
+      fontFamily: 'Inter, sans-serif', fontSize: titleFont, fontStyle: '900', color: '#ffb38f',
       stroke: '#071008', strokeThickness: narrow ? 4 : 8,
     }).setOrigin(0.5));
-    overlay.add(this.add.text(cw / 2, ch / 2 - (narrow ? 10 : 30), reason, {
+    overlay.add(this.add.text(cw / 2, ch / 2 - panelH * 0.08, reason, {
       fontFamily: 'Inter, sans-serif', fontSize: bodyFont, fontStyle: '800', color: '#f7f0bb', align: 'center',
       wordWrap: { width: wrapW }, stroke: '#071008', strokeThickness: narrow ? 3 : 5,
     }).setOrigin(0.5));
-    overlay.add(this.add.text(cw / 2, ch / 2 + panelH * 0.18, `final grass touches: ${this.score}/${WIN_TOUCHES}\npress R or click to restart`, {
+
+    const foot = this.add.text(cw / 2, ch / 2 + panelH * 0.22, `final score: ${this.score}\nsurvived: ${formatDuration(this.survivalTime)}   best combo: x${Math.max(1, this.bestCombo)}\nrestart unlocks in ${(RESTART_LOCK_MS / 1000).toFixed(1)}s`, {
       fontFamily: 'Inter, sans-serif', fontSize: footFont, fontStyle: '900', color: '#bde48b', align: 'center', lineSpacing: narrow ? 4 : 6,
       stroke: '#071008', strokeThickness: narrow ? 3 : 5,
-    }).setOrigin(0.5));
+    }).setOrigin(0.5);
+    overlay.add(foot);
 
     const restart = () => this.scene.restart();
-    this.input.keyboard.once('keydown-R', restart);
-    this.input.once('pointerdown', restart);
+    this.time.delayedCall(RESTART_LOCK_MS, () => {
+      if (!this.scene.isActive()) return;
+      foot.setText(`final score: ${this.score}\nsurvived: ${formatDuration(this.survivalTime)}   best combo: x${Math.max(1, this.bestCombo)}\npress R or click to restart`);
+      this.input.keyboard.once('keydown-R', restart);
+      this.input.once('pointerdown', restart);
+    });
   }
 }
 
