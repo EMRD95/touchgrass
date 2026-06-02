@@ -252,7 +252,6 @@ class GameScene extends Phaser.Scene {
     this.phones = this.physics.add.group({ allowGravity: false });
 
     this.updateWorldChunks(true);
-    this.spawnGrass(STARTING_GRASS, 180, 1800);
     for (let i = 0; i < 5; i += 1) this.spawnHermes();
     for (let i = 0; i < 4; i += 1) this.spawnPhone();
 
@@ -355,6 +354,28 @@ class GameScene extends Phaser.Scene {
       tree.setAlpha(randFloat(rng, 0.82, 1));
       tree.setAngle(randInt(rng, -2, 2));
       objects.push(tree);
+    }
+
+    // Grass tufts — pre-generated per chunk so grass exists before the player arrives.
+    const grassCount = randInt(rng, 3, 5);
+    const grassKeys = ['tuft_0', 'tuft_1', 'tuft_2', 'tuft_3'];
+    const grassTints = [0x74c857, 0x93d867, 0xb7e66f, 0x5eac48];
+    for (let i = 0; i < grassCount; i += 1) {
+      const tuft = this.physics.add.image(
+        x0 + randFloat(rng, 30, CHUNK_SIZE - 30),
+        y0 + randFloat(rng, 30, CHUNK_SIZE - 30),
+        randPick(rng, grassKeys),
+      )
+        .setScale(randFloat(rng, 0.045, 0.065))
+        .setTint(randPick(rng, grassTints))
+        .setDepth(45)
+        .setAlpha(0.96);
+      tuft.body.setAllowGravity(false);
+      tuft.body.setSize(300, 250, true);
+      tuft.setData('picked', false);
+      this.grass.add(tuft);
+      this.tweens.add({ targets: tuft, angle: randInt(rng, -7, 7), duration: randInt(rng, 900, 1300), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+      objects.push(tuft);
     }
 
     this.chunks.set(key, { cx, cy, objects });
@@ -962,15 +983,14 @@ class GameScene extends Phaser.Scene {
   maintainGrassField(time) {
     if (time < this.nextGrassMaintainAt) return;
     this.nextGrassMaintainAt = time + 600;
-    const maxDistance = 2600;
+    // Chunks handle base grass population and culling.
+    // Only clean up orphan tufts that drifted beyond chunk range (replenishment leftovers).
+    const maxDistance = CHUNK_SIZE * (CHUNK_CULL_RADIUS + 1);
     this.grass.getChildren().forEach((tuft) => {
       if (!tuft.active) return;
       const d = Phaser.Math.Distance.Between(tuft.x, tuft.y, this.player.x, this.player.y);
       if (d > maxDistance) tuft.destroy();
     });
-    const target = Math.min(MAX_GRASS, STARTING_GRASS + Math.floor(this.score / 8) + Math.floor(this.survivalTime / 25));
-    const missing = Math.max(0, target - this.grass.getLength());
-    if (missing > 0) this.spawnGrass(missing, 220, 2000);
   }
 
   maintainThreatLevel(time) {
