@@ -6,10 +6,17 @@ const SECRET = 'bf4df7dd7545f0bd88416db34facdb6d913232932ef08b2004ef59b010bdf667
 const PORT = 9000;
 
 function verifySignature(payload, signature) {
-    const hmac = crypto.createHmac('sha256', SECRET);
-    hmac.update(payload);
-    const digest = 'sha256=' + hmac.digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
+    try {
+        const hmac = crypto.createHmac('sha256', SECRET);
+        hmac.update(payload);
+        const digest = 'sha256=' + hmac.digest('hex');
+        const a = Buffer.from(digest);
+        const b = Buffer.from(signature || '');
+        if (a.length !== b.length) return false;
+        return crypto.timingSafeEqual(a, b);
+    } catch {
+        return false;
+    }
 }
 
 function runDeploy() {
