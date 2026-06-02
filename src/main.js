@@ -6,8 +6,8 @@ const GAME_H = 768;
 const CHUNK_SIZE = 900;
 const CHUNK_RADIUS = 2;
 const CHUNK_CULL_RADIUS = 3;
-const STARTING_GRASS = 18;
-const MAX_GRASS = 36;
+const STARTING_GRASS = 30;
+const MAX_GRASS = 72;
 const MAX_HERMES = 64;
 const MAX_PHONES = 68;
 const PLAYER_BASE_SPEED = 225;
@@ -512,7 +512,7 @@ class GameScene extends Phaser.Scene {
       const { x, y } = this.randomGrassPointAroundPlayer(minDistance, maxDistance);
       const key = Phaser.Math.RND.pick(['tuft_0', 'tuft_1', 'tuft_2', 'tuft_3']);
       const tuft = this.physics.add.image(x, y, key)
-        .setScale(Phaser.Math.FloatBetween(0.036, 0.058))
+        .setScale(Phaser.Math.FloatBetween(0.045, 0.065))
         .setTint(Phaser.Math.RND.pick([0x74c857, 0x93d867, 0xb7e66f, 0x5eac48]))
         .setDepth(45)
         .setAlpha(0.96);
@@ -536,7 +536,7 @@ class GameScene extends Phaser.Scene {
 
   randomGrassPointAroundPlayer(minDistance = 420, maxDistance = 1200) {
     const straightSeconds = this.getStraightRunSeconds(this.now());
-    const avoidAngle = typeof this.lastMoveAngle === 'number' && straightSeconds > 0.6 ? this.lastMoveAngle : null;
+    const avoidAngle = typeof this.lastMoveAngle === 'number' && straightSeconds > 1.8 ? this.lastMoveAngle : null;
     let fallback = null;
     for (let i = 0; i < 8; i += 1) {
       const p = this.randomPointAroundPlayer(minDistance, maxDistance);
@@ -545,9 +545,9 @@ class GameScene extends Phaser.Scene {
       const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, p.x, p.y);
       const delta = Math.abs(Phaser.Math.Angle.Wrap(angle - avoidAngle));
       const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, p.x, p.y);
-      // When the player holds one direction, stop feeding a perfect grass lane.
-      // Grass still exists, but it tends to appear in side pockets that require turning.
-      if (!(delta < 0.52 && dist < maxDistance * 0.92)) return p;
+      // When the player holds one direction for a while, avoid only the narrow forward-lane far away.
+      // Grass still appears ahead nearby and in all other directions.
+      if (!(delta < 0.30 && dist > maxDistance * 0.65)) return p;
     }
     return fallback ?? this.randomPointAroundPlayer(minDistance, maxDistance);
   }
@@ -850,7 +850,7 @@ class GameScene extends Phaser.Scene {
     });
 
     const pressure = this.getPressure();
-    this.spawnGrass(1 + (pressure > 70 && this.score % 5 === 0 ? 1 : 0), 280, 1380);
+    this.spawnGrass(2 + (pressure > 50 ? 1 : 0), 280, 1380);
     if (this.score % 4 === 0) this.spawnHermes();
     if (this.score % 5 === 0) this.spawnPhone();
     if (this.score % 12 === 0) {
@@ -962,7 +962,7 @@ class GameScene extends Phaser.Scene {
   maintainGrassField(time) {
     if (time < this.nextGrassMaintainAt) return;
     this.nextGrassMaintainAt = time + 900;
-    const maxDistance = 1850;
+    const maxDistance = 2200;
     this.grass.getChildren().forEach((tuft) => {
       if (!tuft.active) return;
       const d = Phaser.Math.Distance.Between(tuft.x, tuft.y, this.player.x, this.player.y);
