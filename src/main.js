@@ -252,7 +252,7 @@ class GameScene extends Phaser.Scene {
     this.phones = this.physics.add.group({ allowGravity: false });
 
     this.updateWorldChunks(true);
-    this.spawnGrass(STARTING_GRASS, 190, 1080);
+    this.spawnGrass(STARTING_GRASS, 450, 1700);
     for (let i = 0; i < 5; i += 1) this.spawnHermes();
     for (let i = 0; i < 4; i += 1) this.spawnPhone();
 
@@ -517,7 +517,7 @@ class GameScene extends Phaser.Scene {
         .setDepth(45)
         .setAlpha(0.96);
       tuft.body.setAllowGravity(false);
-      tuft.body.setSize(560, 460, true);
+      tuft.body.setSize(300, 250, true);
       tuft.setData('picked', false);
       this.grass.add(tuft);
       this.tweens.add({ targets: tuft, angle: Phaser.Math.Between(-7, 7), duration: Phaser.Math.Between(900, 1300), yoyo: true, repeat: -1, ease: 'Sine.inOut' });
@@ -850,7 +850,7 @@ class GameScene extends Phaser.Scene {
     });
 
     const pressure = this.getPressure();
-    this.spawnGrass(2 + (pressure > 50 ? 1 : 0), 280, 1380);
+    this.spawnGrass(2 + (pressure > 50 ? 1 : 0), 500, 1800);
     if (this.score % 4 === 0) this.spawnHermes();
     if (this.score % 5 === 0) this.spawnPhone();
     if (this.score % 12 === 0) {
@@ -961,8 +961,8 @@ class GameScene extends Phaser.Scene {
 
   maintainGrassField(time) {
     if (time < this.nextGrassMaintainAt) return;
-    this.nextGrassMaintainAt = time + 900;
-    const maxDistance = 2200;
+    this.nextGrassMaintainAt = time + 600;
+    const maxDistance = 2600;
     this.grass.getChildren().forEach((tuft) => {
       if (!tuft.active) return;
       const d = Phaser.Math.Distance.Between(tuft.x, tuft.y, this.player.x, this.player.y);
@@ -970,7 +970,7 @@ class GameScene extends Phaser.Scene {
     });
     const target = Math.min(MAX_GRASS, STARTING_GRASS + Math.floor(this.score / 16) + Math.floor(this.survivalTime / 55));
     const missing = Math.max(0, target - this.grass.getLength());
-    if (missing > 0) this.spawnGrass(missing, 320, 1480);
+    if (missing > 0) this.spawnGrass(missing, 550, 2000);
   }
 
   maintainThreatLevel(time) {
