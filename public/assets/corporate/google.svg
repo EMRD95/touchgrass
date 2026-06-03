@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Google logo">
+  <rect width="128" height="128" rx="28" fill="#fff"/>
+  <circle cx="64" cy="64" r="43" fill="none" stroke="#4285F4" stroke-width="18" stroke-dasharray="76 200" stroke-dashoffset="-14"/>
+  <circle cx="64" cy="64" r="43" fill="none" stroke="#34A853" stroke-width="18" stroke-dasharray="54 220" stroke-dashoffset="-97"/>
+  <circle cx="64" cy="64" r="43" fill="none" stroke="#FBBC05" stroke-width="18" stroke-dasharray="56 220" stroke-dashoffset="-151"/>
+  <circle cx="64" cy="64" r="43" fill="none" stroke="#EA4335" stroke-width="18" stroke-dasharray="72 210" stroke-dashoffset="-205"/>
+  <path d="M66 58h43v13H66z" fill="#4285F4"/>
+  <path d="M101 58c1 23-14 43-38 43-21 0-38-17-38-38s17-38 38-38c10 0 19 4 26 10L78 46c-4-4-9-6-15-6-13 0-23 10-23 23s10 23 23 23c11 0 19-6 22-15H66V58h35z" fill="none" stroke="#fff" stroke-width="5" stroke-linejoin="round"/>
+</svg>

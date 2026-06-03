@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Gmail logo">
+  <rect width="128" height="128" rx="24" fill="#fff"/>
+  <path d="M27 36h74c7 0 12 5 12 12v48c0 7-5 12-12 12H27c-7 0-12-5-12-12V48c0-7 5-12 12-12z" fill="#f1f3f4"/>
+  <path d="M25 43l39 31 39-31v12L64 86 25 55z" fill="#EA4335"/>
+  <path d="M15 50l12-7v58H15z" fill="#C5221F"/>
+  <path d="M101 43l12 7v51h-12z" fill="#F4B400"/>
+  <path d="M27 101h74V62L64 91 27 62z" fill="#fff" opacity="0.78"/>
+  <path d="M27 43l37 29 37-29" fill="none" stroke="#EA4335" stroke-width="10" stroke-linejoin="round"/>
+</svg>

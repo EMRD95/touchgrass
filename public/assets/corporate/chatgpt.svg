@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="ChatGPT inspired enemy logo">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#000" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <circle cx="64" cy="64" r="58" fill="#10a37f" filter="url(#shadow)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 25c11 0 19 8 19 18 0 4-1 8-3 11l-16-9c-5-3-11-3-16 0"/>
+    <path d="M97 45c6 10 3 22-6 27-4 3-8 4-12 3V57c0-6-3-11-8-14"/>
+    <path d="M94 83c-6 10-18 13-27 8-4-2-7-5-9-9l16-9c5-3 8-8 8-14"/>
+    <path d="M64 103c-11 0-19-8-19-18 0-4 1-8 3-11l16 9c5 3 11 3 16 0"/>
+    <path d="M31 83c-6-10-3-22 6-27 4-3 8-4 12-3v18c0 6 3 11 8 14"/>
+    <path d="M34 45c6-10 18-13 27-8 4 2 7 5 9 9l-16 9c-5 3-8 8-8 14"/>
+  </g>
+  <circle cx="64" cy="64" r="10" fill="#fff" opacity="0.22"/>
+</svg>

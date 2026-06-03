@@ -14,6 +14,14 @@ import {
   getChunkGrassCount,
   getPostCollectGrassSpawnCount,
 } from './grass-density.js';
+import {
+  CORPORATE_ENEMY_TYPES,
+  MAX_CORPORATE_ENEMIES,
+  getCorporateEnemyProfile,
+  getCorporateStrategy,
+  getTargetCorporateEnemyCount,
+  pickCorporateEnemyType,
+} from './corporate-enemies.js';
 import './style.css';
 
 const GAME_W = 1376;
@@ -21,8 +29,6 @@ const GAME_H = 768;
 const CHUNK_SIZE = 900;
 const CHUNK_RADIUS = 2;
 const CHUNK_CULL_RADIUS = 3;
-const MAX_HERMES = 64;
-const MAX_PHONES = 68;
 const BREATHE_CORE_RADIUS = 210;
 const BREATHE_OUTER_RADIUS = 390;
 const BREATHE_FORCE = 360;
@@ -43,12 +49,12 @@ const MEMES = [
 ];
 
 const HAZARD_MEMES = [
-  'PHONE AGGRO',
-  'HERMES HAS LOCKED ON',
-  'ALGORITHM CRIT!',
-  'NOTIFICATION PARALYSIS',
+  'BRAND AGGRO',
+  'ALGORITHM LOCKED ON',
+  'NOTIFICATION CRIT!',
+  'ENGAGEMENT LOOP DAMAGE',
   'THE TIMELINE BITES BACK',
-  'HERMES SWARM DAMAGE',
+  'SERVER PINGED YOUR SOUL',
 ];
 
 const ASSET = (path) => `assets/${path}?v=3`;
@@ -124,12 +130,23 @@ class MenuScene extends Phaser.Scene {
     this.load.image('player_walk2', ASSET('characters/player_walk2.png'));
     this.load.image('player_cheer', ASSET('characters/player_cheer.png'));
     this.load.image('player_hurt', ASSET('characters/player_hurt.png'));
-    this.load.image('hermes_walk1', ASSET('characters/hermes_walk1.png'));
-    this.load.image('hermes_walk2', ASSET('characters/hermes_walk2.png'));
+    this.load.image('logo_tiktok', ASSET('corporate/tiktok.svg'));
+    this.load.image('logo_youtube', ASSET('corporate/youtube.svg'));
+    this.load.image('logo_chatgpt', ASSET('corporate/chatgpt.svg'));
+    this.load.image('logo_discord', ASSET('corporate/discord.svg'));
+    this.load.image('logo_google', ASSET('corporate/google.svg'));
+    this.load.image('logo_wikipedia', ASSET('corporate/wikipedia.svg'));
+    this.load.image('logo_gmail', ASSET('corporate/gmail.svg'));
+    this.load.image('logo_instagram', ASSET('corporate/instagram.svg'));
+    this.load.image('logo_facebook', ASSET('corporate/facebook.svg'));
+    this.load.image('logo_linkedin', ASSET('corporate/linkedin.svg'));
+    this.load.image('logo_teams', ASSET('corporate/teams.svg'));
+    this.load.image('logo_whatsapp', ASSET('corporate/whatsapp.svg'));
+    this.load.image('logo_twitter', ASSET('corporate/twitter.svg'));
     this.load.audio('foot0', ASSET('audio/footstep_grass_000.ogg'));
     this.load.audio('foot1', ASSET('audio/footstep_grass_001.ogg'));
     this.load.audio('touch', ASSET('audio/touch.ogg'));
-    this.load.audio('hit', ASSET('audio/hit.ogg'));
+    this.load.audio('notification', ASSET('audio/notification_chime.ogg'));
   }
 
   create() {
@@ -188,15 +205,11 @@ class GameScene extends Phaser.Scene {
     this.nextWorldUpdateAt = time;
     this.nextGrassMaintainAt = time + 900;
     this.nextThreatMaintainAt = time + 700;
-    this.hermes?.getChildren().forEach((hazard) => {
-      hazard.setData('nextStrategyAt', time + Phaser.Math.Between(9000, 17000));
-      hazard.setData('lungeAt', time + Phaser.Math.Between(1400, 2800));
+    this.corporateEnemies?.getChildren().forEach((hazard) => {
+      const profile = getCorporateEnemyProfile(hazard.getData('type'));
+      hazard.setData('nextStrategyAt', time + Phaser.Math.Between(8000, 17000));
+      hazard.setData('lungeAt', time + Phaser.Math.Between(profile.lungeBaseMinMs, profile.lungeBaseMaxMs));
       hazard.setData('lungeUntil', 0);
-      hazard.setData('repelledUntil', 0);
-    });
-    this.phones?.getChildren().forEach((hazard) => {
-      hazard.setData('nextStrategyAt', time + Phaser.Math.Between(8000, 15000));
-      hazard.setData('lungeAt', time + Phaser.Math.Between(1200, 2400));
       hazard.setData('repelledUntil', 0);
       hazard.setData('retargetAt', 0);
     });
@@ -242,24 +255,18 @@ class GameScene extends Phaser.Scene {
     if (!this.anims.exists('player_walk')) {
       this.anims.create({ key: 'player_walk', frames: [{ key: 'player_walk1' }, { key: 'player_walk2' }], frameRate: 7, repeat: -1 });
     }
-    if (!this.anims.exists('hermes_walk')) {
-      this.anims.create({ key: 'hermes_walk', frames: [{ key: 'hermes_walk1' }, { key: 'hermes_walk2' }], frameRate: 6, repeat: -1 });
-    }
 
     this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
     this.cameras.main.setDeadzone(80, 60);
 
     this.grass = this.physics.add.group({ allowGravity: false, immovable: true });
-    this.hermes = this.physics.add.group({ allowGravity: false });
-    this.phones = this.physics.add.group({ allowGravity: false });
+    this.corporateEnemies = this.physics.add.group({ allowGravity: false });
 
     this.updateWorldChunks(true);
-    for (let i = 0; i < 5; i += 1) this.spawnHermes();
-    for (let i = 0; i < 4; i += 1) this.spawnPhone();
+    for (let i = 0; i < 9; i += 1) this.spawnCorporateEnemy();
 
     this.physics.add.overlap(this.player, this.grass, (_, tuft) => this.collectGrass(tuft));
-    this.physics.add.overlap(this.player, this.hermes, (_, hazard) => this.takeDamage('hermes', hazard));
-    this.physics.add.overlap(this.player, this.phones, (_, hazard) => this.takeDamage('phone', hazard));
+    this.physics.add.overlap(this.player, this.corporateEnemies, (_, hazard) => this.takeDamage(hazard));
 
     this.keys = this.input.keyboard.addKeys('W,A,S,D,SHIFT,R,SPACE');
     this.ctrlKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
@@ -508,20 +515,12 @@ class GameScene extends Phaser.Scene {
     return this.capThreatSpeed(215 + pressure * 4.45, ratio);
   }
 
-  getHermesSpeed() {
+  getCorporateSpeed() {
     return this.getThreatSpeed();
   }
 
-  getPhoneSpeed() {
-    return this.getThreatSpeed();
-  }
-
-  targetHermesCount() {
-    return Math.min(MAX_HERMES, 5 + Math.floor(this.score / 5) + Math.floor(this.survivalTime / 16));
-  }
-
-  targetPhoneCount() {
-    return Math.min(MAX_PHONES, 4 + Math.floor(this.score / 5) + Math.floor(this.survivalTime / 18));
+  targetCorporateEnemyCount() {
+    return getTargetCorporateEnemyCount({ score: this.score, survivalTime: this.survivalTime });
   }
 
   spawnGrass(count = 1, minDistance = 130, maxDistance = 980) {
@@ -578,62 +577,45 @@ class GameScene extends Phaser.Scene {
     return this.randomPointAroundPlayer(minDistance, maxDistance);
   }
 
-  spawnHermes() {
-    if (this.hermes.getLength() >= MAX_HERMES) return;
-    const { x, y } = this.randomSpawnPointNearEdge(80);
+  spawnCorporateEnemy(type = pickCorporateEnemyType(Math.random)) {
+    if (this.corporateEnemies.getLength() >= MAX_CORPORATE_ENEMIES) return;
+    const profile = getCorporateEnemyProfile(type);
+    const { x, y } = this.randomSpawnPointNearEdge(profile.type === 'youtube' ? 90 : 45);
     const pressure = this.getPressure();
-    const strategy = Phaser.Math.RND.pick(['chaser', 'flanker', 'flanker', 'ambusher', 'herder']);
-    const hermes = this.physics.add.sprite(x, y, 'hermes_walk1')
-      .setScale(0.55 + Math.min(0.16, pressure / 720))
-      .setFlipX(true)
-      .setDepth(80)
-      .play('hermes_walk');
-    hermes.body.setAllowGravity(false);
-    hermes.body.setSize(38, 72).setOffset(21, 32);
-    hermes.setData('strategy', strategy);
-    hermes.setData('side', Phaser.Math.RND.pick([-1, 1]));
-    hermes.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
-    hermes.setData('orbitRadius', Phaser.Math.Between(210, 360));
-    hermes.setData('nextStrategyAt', this.now() + Phaser.Math.Between(9000, 17000));
-    hermes.setData('wanderAt', 0);
-    hermes.setData('lungeAt', this.now() + Phaser.Math.Between(1400, 2800));
-    hermes.setData('lungeUntil', 0);
-    hermes.setData('repelledUntil', 0);
-    hermes.setData('moveAngle', Phaser.Math.Angle.Between(hermes.x, hermes.y, this.player.x, this.player.y));
-    hermes.setData('idleMoveAngle', null);
-    hermes.setData('idleMoveAngleRefreshAt', 0);
-    this.aimHazardAtPlayer(hermes, this.getThreatSpeed(), 0.45);
-    this.hermes.add(hermes);
-  }
-
-  spawnPhone() {
-    if (this.phones.getLength() >= MAX_PHONES) return;
-    const { x, y } = this.randomSpawnPointNearEdge(40);
-    const pressure = this.getPressure();
-    const strategy = Phaser.Math.RND.pick(['homing', 'sweeper', 'sweeper', 'orbiter', 'cutoff']);
-    const phone = this.add.text(x, y, '📱', {
-      fontFamily: 'Inter, sans-serif',
-      fontSize: `${Math.min(42, 34 + pressure * 0.035)}px`,
-      stroke: '#071008',
-      strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(100);
-    this.physics.add.existing(phone);
-    phone.body.setAllowGravity(false);
-    phone.body.setSize(34, 34, true);
-    phone.setData('strategy', strategy);
-    phone.setData('side', Phaser.Math.RND.pick([-1, 1]));
-    phone.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
-    phone.setData('orbitRadius', Phaser.Math.Between(180, 320));
-    phone.setData('nextStrategyAt', this.now() + Phaser.Math.Between(8000, 15000));
-    phone.setData('retargetAt', 0);
-    phone.setData('lungeAt', this.now() + Phaser.Math.Between(1200, 2400));
-    phone.setData('repelledUntil', 0);
-    phone.setData('moveAngle', Phaser.Math.Angle.Between(phone.x, phone.y, this.player.x, this.player.y));
-    phone.setData('idleMoveAngle', null);
-    phone.setData('idleMoveAngleRefreshAt', 0);
-    this.aimHazardAtPlayer(phone, this.getThreatSpeed(), 0.5);
-    this.phones.add(phone);
-    this.tweens.add({ targets: phone, angle: 14, scaleX: 1.16, scaleY: 1.16, duration: 520, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+    const strategy = getCorporateStrategy(profile, Math.random);
+    const displaySize = profile.size + Math.min(9, pressure / 85);
+    const enemy = this.physics.add.image(x, y, profile.textureKey)
+      .setDisplaySize(displaySize, displaySize)
+      .setDepth(95)
+      .setAlpha(0.98);
+    enemy.body.setAllowGravity(false);
+    enemy.body.setSize(profile.bodySize, profile.bodySize, true);
+    enemy.setData('type', profile.type);
+    enemy.setData('label', profile.label);
+    enemy.setData('strategy', strategy);
+    enemy.setData('side', Phaser.Math.RND.pick([-1, 1]));
+    enemy.setData('phase', Phaser.Math.FloatBetween(0, Math.PI * 2));
+    enemy.setData('orbitRadius', Phaser.Math.Between(185, 365));
+    enemy.setData('nextStrategyAt', this.now() + Phaser.Math.Between(8000, 17000));
+    enemy.setData('retargetAt', 0);
+    enemy.setData('lungeAt', this.now() + Phaser.Math.Between(profile.lungeBaseMinMs, profile.lungeBaseMaxMs));
+    enemy.setData('lungeUntil', 0);
+    enemy.setData('repelledUntil', 0);
+    enemy.setData('moveAngle', Phaser.Math.Angle.Between(enemy.x, enemy.y, this.player.x, this.player.y));
+    enemy.setData('idleMoveAngle', null);
+    enemy.setData('idleMoveAngleRefreshAt', 0);
+    this.aimHazardAtPlayer(enemy, this.getThreatSpeed(), profile.jitter);
+    this.corporateEnemies.add(enemy);
+    this.tweens.add({
+      targets: enemy,
+      angle: Phaser.Math.Between(-9, 9),
+      scaleX: enemy.scaleX * profile.pulseScale,
+      scaleY: enemy.scaleY * profile.pulseScale,
+      duration: profile.pulseMs,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
   }
 
   aimHazardAtPlayer(hazard, speed, jitter = 0) {
@@ -785,9 +767,9 @@ class GameScene extends Phaser.Scene {
     return best ?? route.lead;
   }
 
-  getThreatTarget(hazard, kind, time) {
+  getCorporateThreatTarget(hazard, profile, time) {
     const pressure = this.getPressure();
-    const strategy = hazard.getData('strategy') ?? (kind === 'phone' ? 'homing' : 'chaser');
+    const strategy = hazard.getData('strategy') ?? profile.strategies[0];
     const phase = hazard.getData('phase') ?? 0;
     const route = this.getRouteContext(hazard, time);
     const intent = route.intent;
@@ -799,36 +781,177 @@ class GameScene extends Phaser.Scene {
     hazard.setData('graphTargetY', Math.round(cut.y));
     hazard.setData('graphPlayerEta', Number((cut.playerEta ?? 0).toFixed(2)));
     hazard.setData('graphThreatEta', Number((cut.threatEta ?? 0).toFixed(2)));
+    hazard.setData('graphPattern', profile.primaryPattern);
+    const routeNodes = route.routeNodes ?? [];
+    const hopIndex = routeNodes.length
+      ? Math.floor(Math.abs(Math.sin(time / 1150 + phase)) * routeNodes.length) % routeNodes.length
+      : -1;
+    const routeHop = routeNodes[hopIndex] ?? route.lead;
+    const gridSize = 110;
+    const snapToMeetingGrid = (point) => ({
+      x: Math.round(point.x / gridSize) * gridSize,
+      y: Math.round(point.y / gridSize) * gridSize,
+    });
 
-    if (kind === 'phone') {
-      if (strategy === 'sweeper') {
-        const sweep = this.chooseGraphCutNode(hazard, route, sideOffset * 0.95);
-        return { x: sweep.x - route.fx * 60, y: sweep.y - route.fy * 60 };
-      }
-      if (strategy === 'orbiter') {
-        const orbit = hazard.getData('orbitRadius') ?? 260;
-        const anchor = route.grassTarget ?? route.lead;
-        return { x: anchor.x + route.sx * orbit + route.fx * wiggle * 95, y: anchor.y + route.sy * orbit + route.fy * wiggle * 95 };
-      }
-      if (strategy === 'cutoff') {
-        const cutoff = this.chooseGraphCutNode(hazard, route, sideOffset * 0.55);
-        return { x: cutoff.x + route.sx * wiggle * 90, y: cutoff.y + route.sy * wiggle * 90 };
-      }
-      // Homing phones still chase, but they lead the route toward the next grass.
-      return { x: route.lead.x + route.sx * wiggle * 45, y: route.lead.y + route.sy * wiggle * 45 };
+    if (strategy === 'sweeper') {
+      const sweep = this.chooseGraphCutNode(hazard, route, sideOffset * 0.95);
+      return { x: sweep.x - route.fx * 60, y: sweep.y - route.fy * 60 };
     }
-
+    if (strategy === 'zigzag') {
+      const zig = Math.sin(time / 260 + phase) * sideOffset * 0.85;
+      const surge = Math.cos(time / 430 + phase) * 95;
+      return { x: route.lead.x + route.sx * zig + route.fx * surge, y: route.lead.y + route.sy * zig + route.fy * surge };
+    }
+    if (strategy === 'cutoff') {
+      const cutoff = this.chooseGraphCutNode(hazard, route, sideOffset * 0.55);
+      return { x: cutoff.x + route.sx * wiggle * 90, y: cutoff.y + route.sy * wiggle * 90 };
+    }
+    if (strategy === 'orbiter') {
+      const orbit = hazard.getData('orbitRadius') ?? 260;
+      const anchor = route.grassTarget ?? route.lead;
+      return { x: anchor.x + route.sx * orbit + route.fx * wiggle * 95, y: anchor.y + route.sy * orbit + route.fy * wiggle * 95 };
+    }
     if (strategy === 'flanker') {
       const flank = this.chooseGraphCutNode(hazard, route, sideOffset);
       return { x: flank.x - route.fx * 75, y: flank.y - route.fy * 75 };
+    }
+    if (strategy === 'pack') {
+      const packAngle = phase + time / 1100;
+      const radius = 145 + Math.min(140, pressure * 1.25);
+      return { x: route.px + Math.cos(packAngle) * radius + route.sx * wiggle * 110, y: route.py + Math.sin(packAngle) * radius + route.sy * wiggle * 110 };
+    }
+    if (strategy === 'predictor') {
+      const predictive = this.chooseGraphCutNode(hazard, route, sideOffset * 0.2);
+      return { x: predictive.x + route.fx * 135 + route.sx * wiggle * 45, y: predictive.y + route.fy * 135 + route.sy * wiggle * 45 };
+    }
+    if (strategy === 'mirror') {
+      const mirrorLead = Math.min(route.routeDistance, (this.playerSpeed || this.getPlayerSpeed()) * 1.55);
+      return { x: route.px + route.fx * mirrorLead - route.sx * sideOffset * 0.8, y: route.py + route.fy * mirrorLead - route.sy * sideOffset * 0.8 };
     }
     if (strategy === 'ambusher') {
       const ambush = this.chooseGraphCutNode(hazard, route, sideOffset * 0.35);
       return { x: ambush.x + route.fx * 60 + route.sx * wiggle * 70, y: ambush.y + route.fy * 60 + route.sy * wiggle * 70 };
     }
     if (strategy === 'herder') {
-      // Herding ghosts aim behind the route so the player gets pushed toward the cutoff ghosts.
       return { x: route.px - route.fx * 110 + route.sx * (sideOffset * 0.55 + wiggle * 75), y: route.py - route.fy * 110 + route.sy * (sideOffset * 0.55 + wiggle * 75) };
+    }
+    if (strategy === 'search-crawler') {
+      const crawlOffset = Math.sin(time / 360 + phase) * sideOffset * 0.65;
+      return { x: routeHop.x + route.sx * crawlOffset - route.fx * 45, y: routeHop.y + route.sy * crawlOffset - route.fy * 45 };
+    }
+    if (strategy === 'rank-cutoff') {
+      const rankStep = Math.floor(time / 900 + phase) % 4;
+      const ranked = this.chooseGraphCutNode(hazard, route, sideOffset * (0.25 + rankStep * 0.23));
+      return { x: ranked.x + route.fx * 35, y: ranked.y + route.fy * 35 };
+    }
+    if (strategy === 'map-pin') {
+      const pin = route.grassTarget ?? route.goal;
+      const pulse = Math.sin(time / 430 + phase) * 85;
+      return { x: pin.x + route.sx * pulse, y: pin.y + route.sy * pulse };
+    }
+    if (strategy === 'citation-web') {
+      const citation = routeHop;
+      const web = Math.cos(time / 520 + phase) * sideOffset * 0.5;
+      return { x: citation.x + route.sx * web + route.fx * 70, y: citation.y + route.sy * web + route.fy * 70 };
+    }
+    if (strategy === 'archive-cage') {
+      const cage = this.chooseGraphCutNode(hazard, route, sideOffset * 0.75);
+      const bar = Math.sin(time / 840 + phase) > 0 ? 1 : -1;
+      return { x: cage.x - route.fx * 95 * bar + route.sx * sideOffset * 0.35, y: cage.y - route.fy * 95 * bar + route.sy * sideOffset * 0.35 };
+    }
+    if (strategy === 'knowledge-orbit') {
+      const anchor = route.grassTarget ?? route.lead;
+      const angle = time / 920 + phase;
+      const radius = 135 + Math.min(150, pressure * 1.1);
+      return { x: anchor.x + Math.cos(angle) * radius, y: anchor.y + Math.sin(angle) * radius };
+    }
+    if (strategy === 'inbox-pincer') {
+      const pincer = this.chooseGraphCutNode(hazard, route, sideOffset * 0.45);
+      const flap = Math.sin(time / 300 + phase) > 0 ? 1 : -1;
+      return { x: pincer.x + route.sx * sideOffset * 0.45 * flap, y: pincer.y + route.sy * sideOffset * 0.45 * flap };
+    }
+    if (strategy === 'reply-all-flank') {
+      const flank = this.chooseGraphCutNode(hazard, route, sideOffset * 1.15);
+      return { x: flank.x - route.fx * 125 + route.sx * wiggle * 65, y: flank.y - route.fy * 125 + route.sy * wiggle * 65 };
+    }
+    if (strategy === 'spam-filter') {
+      return { x: route.px + route.fx * 85 - route.sx * sideOffset * 0.9, y: route.py + route.fy * 85 - route.sy * sideOffset * 0.9 };
+    }
+    if (strategy === 'story-ring') {
+      const ringAngle = time / 640 + phase;
+      const ring = 170 + Math.min(150, pressure * 1.3);
+      return { x: route.px + Math.cos(ringAngle) * ring + route.fx * 85, y: route.py + Math.sin(ringAngle) * ring + route.fy * 85 };
+    }
+    if (strategy === 'reels-zigzag') {
+      const reel = Math.sin(time / 210 + phase) * sideOffset;
+      return { x: route.lead.x + route.sx * reel + route.fx * Math.cos(time / 310 + phase) * 120, y: route.lead.y + route.sy * reel + route.fy * Math.cos(time / 310 + phase) * 120 };
+    }
+    if (strategy === 'influencer-herd') {
+      return { x: route.px - route.fx * 145 + route.sx * (sideOffset * 0.75 + wiggle * 120), y: route.py - route.fy * 145 + route.sy * (sideOffset * 0.75 + wiggle * 120) };
+    }
+    if (strategy === 'feed-herd') {
+      return { x: route.px - route.fx * 85 + route.sx * (sideOffset * 0.65 + wiggle * 90), y: route.py - route.fy * 85 + route.sy * (sideOffset * 0.65 + wiggle * 90) };
+    }
+    if (strategy === 'friend-request-pack') {
+      const packAngle = phase + time / 1250;
+      const packRadius = 115 + Math.min(160, pressure * 1.1);
+      return { x: route.px + Math.cos(packAngle) * packRadius + route.sx * 95, y: route.py + Math.sin(packAngle) * packRadius + route.sy * 95 };
+    }
+    if (strategy === 'memory-ambush') {
+      const memory = this.chooseGraphCutNode(hazard, route, sideOffset * 0.1);
+      return { x: memory.x - route.fx * 160 + route.sx * wiggle * 85, y: memory.y - route.fy * 160 + route.sy * wiggle * 85 };
+    }
+    if (strategy === 'career-ladder') {
+      const rung = routeNodes[Math.floor((time / 820 + phase) % Math.max(1, routeNodes.length))] ?? route.lead;
+      return { x: rung.x + route.sx * (sideOffset * 0.5), y: rung.y + route.sy * (sideOffset * 0.5) };
+    }
+    if (strategy === 'recruiter-cutoff') {
+      const recruiter = this.chooseGraphCutNode(hazard, route, sideOffset * 0.7);
+      return { x: recruiter.x + route.fx * 95, y: recruiter.y + route.fy * 95 };
+    }
+    if (strategy === 'network-flank') {
+      const network = this.chooseGraphCutNode(hazard, route, sideOffset * 1.25);
+      return { x: network.x - route.fx * 35 + route.sx * wiggle * 50, y: network.y - route.fy * 35 + route.sy * wiggle * 50 };
+    }
+    if (strategy === 'meeting-gridlock') {
+      const snapped = snapToMeetingGrid(routeHop);
+      return { x: snapped.x + route.sx * 55, y: snapped.y + route.sy * 55 };
+    }
+    if (strategy === 'calendar-block') {
+      const block = this.chooseGraphCutNode(hazard, route, sideOffset * 0.35);
+      const snapped = snapToMeetingGrid(block);
+      return { x: snapped.x + route.fx * 60, y: snapped.y + route.fy * 60 };
+    }
+    if (strategy === 'status-mirror') {
+      const mirrorLead = Math.min(route.routeDistance, (this.playerSpeed || this.getPlayerSpeed()) * 1.35);
+      return { x: route.px + route.fx * mirrorLead + route.sx * Math.sin(time / 600 + phase) * sideOffset, y: route.py + route.fy * mirrorLead + route.sy * Math.sin(time / 600 + phase) * sideOffset };
+    }
+    if (strategy === 'message-bounce') {
+      const bounce = Math.sin(time / 360 + phase);
+      return { x: route.lead.x + route.sx * bounce * sideOffset + route.fx * Math.abs(bounce) * 95, y: route.lead.y + route.sy * bounce * sideOffset + route.fy * Math.abs(bounce) * 95 };
+    }
+    if (strategy === 'group-chat-pack') {
+      const packAngle = phase + time / 780;
+      const packRadius = 125 + Math.min(165, pressure * 1.2);
+      return { x: route.px + Math.cos(packAngle) * packRadius + route.sx * wiggle * 70, y: route.py + Math.sin(packAngle) * packRadius + route.sy * wiggle * 70 };
+    }
+    if (strategy === 'double-tick') {
+      const tick = this.chooseGraphCutNode(hazard, route, sideOffset * 0.32);
+      const secondTick = Math.sin(time / 260 + phase) > 0 ? 42 : 104;
+      return { x: tick.x + route.fx * secondTick + route.sx * 42, y: tick.y + route.fy * secondTick + route.sy * 42 };
+    }
+    if (strategy === 'doomscroll-dive') {
+      const dive = this.chooseGraphCutNode(hazard, route, sideOffset * 0.18);
+      const swoop = Math.sin(time / 390 + phase) * 155;
+      return { x: dive.x + route.fx * 160 + route.sx * swoop, y: dive.y + route.fy * 160 + route.sy * swoop };
+    }
+    if (strategy === 'quote-retweet-cutoff') {
+      const quote = this.chooseGraphCutNode(hazard, route, sideOffset * 0.9);
+      return { x: quote.x - route.fx * 70 - route.sx * wiggle * 110, y: quote.y - route.fy * 70 - route.sy * wiggle * 110 };
+    }
+    if (strategy === 'trend-sweep') {
+      const sweep = this.chooseGraphCutNode(hazard, route, sideOffset * 1.2);
+      return { x: sweep.x + route.sx * Math.sin(time / 240 + phase) * 125, y: sweep.y + route.sy * Math.sin(time / 240 + phase) * 125 };
     }
     return { x: route.lead.x + route.sx * wiggle * 32, y: route.lead.y + route.sy * wiggle * 32 };
   }
@@ -870,34 +993,35 @@ class GameScene extends Phaser.Scene {
 
     const pressure = this.getPressure();
     this.spawnGrass(getPostCollectGrassSpawnCount(pressure, Math.random), 200, 1900);
-    if (this.score % 4 === 0) this.spawnHermes();
-    if (this.score % 5 === 0) this.spawnPhone();
+    if (this.score % 4 === 0) this.spawnCorporateEnemy();
+    if (this.score % 5 === 0) this.spawnCorporateEnemy();
     if (this.score % 12 === 0) {
-      this.spawnHermes();
-      this.spawnPhone();
-      this.floatText(this.player.x, this.player.y - 110, 'THE SWARM ESCALATES', '#ffb38f', 22);
+      this.spawnCorporateEnemy();
+      this.spawnCorporateEnemy();
+      this.floatText(this.player.x, this.player.y - 110, 'THE BRAND SWARM ESCALATES', '#ffb38f', 22);
     }
     this.refreshHud();
   }
 
-  takeDamage(kind, hazard) {
+  takeDamage(hazard) {
     if (this.gameEnded) return;
     if (this.now() < this.invulnerableUntil) {
       this.repelHazard(hazard, 340, 520);
       return;
     }
     const pressure = this.getPressure();
+    const profile = getCorporateEnemyProfile(hazard?.getData('type') ?? 'youtube');
     this.invulnerableUntil = this.now() + Math.max(560, 940 - pressure * 4.2);
     this.combo = 0;
-    const damage = kind === 'phone' ? 12.8 + pressure * 0.065 : 11.5 + pressure * 0.06;
+    const damage = profile.damageBase + pressure * profile.damagePressure;
     this.chill = Math.max(0, this.chill - damage);
-    this.sound.play('hit', { volume: 0.28 });
+    this.sound.play('notification', { volume: 0.42, detune: Phaser.Math.Between(-25, 35) });
     this.player.setTexture('player_hurt').setTint(0xffb5a8);
     this.cameras.main.shake(170, 0.008 + Math.min(0.012, pressure / 15000));
-    this.floatText(this.player.x, this.player.y - 90, Phaser.Math.RND.pick(HAZARD_MEMES), '#ffb38f', 21);
+    this.floatText(this.player.x, this.player.y - 90, `${profile.label.toUpperCase()} ${Phaser.Math.RND.pick(HAZARD_MEMES)}`, '#ffb38f', 21);
     if (hazard?.body) this.repelHazard(hazard, 285 + pressure * 0.85, 360);
     this.time.delayedCall(170, () => this.player.clearTint());
-    if (this.chill <= 0) this.endGame(false, 'THE PHONE + HERMES SWARM FINALLY CAUGHT YOU');
+    if (this.chill <= 0) this.endGame(false, 'THE BRAND NOTIFICATION SWARM FINALLY DRAGGED YOU BACK INSIDE');
     this.refreshHud();
   }
 
@@ -912,7 +1036,7 @@ class GameScene extends Phaser.Scene {
     this.floatText(this.player.x, this.player.y - 92, 'INHALE... EXHALE...\nSMALL OPENING', '#b9f28e', 20);
     const ring = this.add.circle(this.player.x, this.player.y, 24, 0xb9f28e, 0.11).setStrokeStyle(3, 0xf7f0bb, 0.72).setDepth(70);
     this.tweens.add({ targets: ring, radius: BREATHE_OUTER_RADIUS, alpha: 0, duration: 480, ease: 'Sine.out', onComplete: () => ring.destroy() });
-    [...this.hermes.getChildren(), ...this.phones.getChildren()].forEach((hazard) => {
+    this.corporateEnemies.getChildren().forEach((hazard) => {
       if (!hazard.body) return;
       const dist = Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y);
       if (dist > BREATHE_OUTER_RADIUS) return;
@@ -957,9 +1081,14 @@ class GameScene extends Phaser.Scene {
       ? (breathWait > 0 ? `${breathWait.toFixed(1)}s` : 'ready')
       : (breathWait > 0 ? `ctrl breathe ${breathWait.toFixed(1)}s` : 'ctrl/breathe ready');
     this.breathText.setText(breathLabel);
-    const hermesCount = this.hermes?.getLength() ?? 0;
-    const phoneCount = this.phones?.getLength() ?? 0;
-    this.swarmText.setText(this._narrow ? `⚠ ${hermesCount + phoneCount}` : `swarm: ${hermesCount}+${phoneCount}`);
+    const corporateCount = this.corporateEnemies?.getLength() ?? 0;
+    this.swarmText.setText(this._narrow ? `⚠ ${corporateCount}` : `brand swarm: ${corporateCount}`);
+    const corporateEnemyCounts = Object.fromEntries(
+      CORPORATE_ENEMY_TYPES.map((type) => [
+        type,
+        this.corporateEnemies?.getChildren().filter((hazard) => hazard.getData('type') === type).length ?? 0,
+      ]),
+    );
     window.__GTS_STATE__ = {
       score: this.score,
       bestCombo: this.bestCombo,
@@ -971,8 +1100,8 @@ class GameScene extends Phaser.Scene {
       noGrassSeconds: Number(this.getNoGrassSeconds(this.now()).toFixed(1)),
       straightRunSeconds: Number(this.getStraightRunSeconds(this.now()).toFixed(1)),
       chillDrainRate: Number(this.getChillDrainRate(this.now()).toFixed(2)),
-      hermes: this.hermes?.getLength() ?? 0,
-      phones: this.phones?.getLength() ?? 0,
+      corporateEnemies: corporateCount,
+      corporateEnemyCounts,
       chunks: this.chunks?.size ?? 0,
       ended: this.gameEnded,
       breathReady: breathWait <= 0,
@@ -998,22 +1127,14 @@ class GameScene extends Phaser.Scene {
     this.nextThreatMaintainAt = time + Math.max(280, 980 - pressure * 12);
 
     const despawnDistance = 2500 + Math.min(760, pressure * 13);
-    this.hermes.getChildren().forEach((hazard) => {
-      if (Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y) > despawnDistance) hazard.destroy();
-    });
-    this.phones.getChildren().forEach((hazard) => {
+    this.corporateEnemies.getChildren().forEach((hazard) => {
       if (Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y) > despawnDistance) hazard.destroy();
     });
 
     const burst = 1 + Math.floor(Math.min(5, pressure / 27));
     let budget = burst;
-    while (this.hermes.getLength() < this.targetHermesCount() && budget > 0) {
-      this.spawnHermes();
-      budget -= 1;
-    }
-    budget = burst;
-    while (this.phones.getLength() < this.targetPhoneCount() && budget > 0) {
-      this.spawnPhone();
+    while (this.corporateEnemies.getLength() < this.targetCorporateEnemyCount() && budget > 0) {
+      this.spawnCorporateEnemy();
       budget -= 1;
     }
   }
@@ -1090,58 +1211,40 @@ class GameScene extends Phaser.Scene {
     const pressure = this.getPressure();
     const threatSpeed = this.getThreatSpeed();
 
-    this.hermes.getChildren().forEach((hermes) => {
-      if (!hermes.body) return;
-      const d = Phaser.Math.Distance.Between(hermes.x, hermes.y, this.player.x, this.player.y);
-      if (d > 3400) {
-        hermes.destroy();
-        return;
-      }
-
-      if (time < (hermes.getData('repelledUntil') ?? 0)) {
-        hermes.setFlipX(hermes.body.velocity.x >= 0);
-        return;
-      }
-
-      this.rotateThreatStrategy(hermes, ['chaser', 'flanker', 'flanker', 'ambusher', 'herder'], time);
-      if (time > hermes.getData('lungeAt')) {
-        hermes.setData('lungeAt', time + Math.max(900, Phaser.Math.Between(1900, 3200) - pressure * 8));
-        hermes.setData('lungeUntil', time + Math.min(520, 220 + pressure * 4.5));
-      }
-      const lunging = time < hermes.getData('lungeUntil');
-      const target = lunging ? { x: this.player.x, y: this.player.y } : this.getThreatTarget(hermes, 'hermes', time);
-      this.moveHazardToward(hermes, target, threatSpeed);
-      hermes.setFlipX(hermes.body.velocity.x >= 0);
-      hermes.anims.timeScale = Math.min(2.8, 1 + pressure / 62);
-    });
-
-    this.phones.getChildren().forEach((phone) => {
-      if (!phone.body) return;
-      const d = Phaser.Math.Distance.Between(phone.x, phone.y, this.player.x, this.player.y);
+    this.corporateEnemies.getChildren().forEach((enemy) => {
+      if (!enemy.body) return;
+      const d = Phaser.Math.Distance.Between(enemy.x, enemy.y, this.player.x, this.player.y);
       if (d > 3500) {
-        phone.destroy();
+        enemy.destroy();
         return;
       }
 
-      if (time < (phone.getData('repelledUntil') ?? 0)) return;
+      if (time < (enemy.getData('repelledUntil') ?? 0)) return;
 
-      this.rotateThreatStrategy(phone, ['homing', 'sweeper', 'sweeper', 'orbiter', 'cutoff'], time);
-      if (time > phone.getData('lungeAt')) {
-        phone.setData('lungeAt', time + Math.max(760, Phaser.Math.Between(1500, 2900) - pressure * 7));
-        phone.setData('retargetAt', 0);
+      const profile = getCorporateEnemyProfile(enemy.getData('type'));
+      this.rotateThreatStrategy(enemy, profile.strategies, time);
+      if (time > enemy.getData('lungeAt')) {
+        enemy.setData('lungeAt', time + Math.max(profile.lungeMinMs, Phaser.Math.Between(profile.lungeBaseMinMs, profile.lungeBaseMaxMs) - pressure * profile.lungePressureMs));
+        enemy.setData('lungeUntil', time + Math.min(520, 220 + pressure * 4.5));
+        enemy.setData('retargetAt', 0);
       }
-      if (time > phone.getData('retargetAt')) {
-        const interval = Math.max(240, 900 - pressure * 5.4);
-        phone.setData('retargetAt', time + interval);
-        const target = this.getThreatTarget(phone, 'phone', time);
-        phone.setData('targetX', target.x);
-        phone.setData('targetY', target.y);
+
+      const lunging = time < (enemy.getData('lungeUntil') ?? 0);
+      if (lunging) {
+        enemy.setData('targetX', this.player.x);
+        enemy.setData('targetY', this.player.y);
+      } else if (time > (enemy.getData('retargetAt') ?? 0)) {
+        const interval = Math.max(240, profile.retargetBaseMs - pressure * profile.retargetPressureMs);
+        enemy.setData('retargetAt', time + interval);
+        const target = this.getCorporateThreatTarget(enemy, profile, time);
+        enemy.setData('targetX', target.x);
+        enemy.setData('targetY', target.y);
       }
       const target = {
-        x: phone.getData('targetX') ?? this.player.x,
-        y: phone.getData('targetY') ?? this.player.y,
+        x: enemy.getData('targetX') ?? this.player.x,
+        y: enemy.getData('targetY') ?? this.player.y,
       };
-      this.moveHazardToward(phone, target, threatSpeed);
+      this.moveHazardToward(enemy, target, threatSpeed);
     });
   }
 
