@@ -57,7 +57,7 @@ const HAZARD_MEMES = [
   'SERVER PINGED YOUR SOUL',
 ];
 
-const ASSET = (path) => `assets/${path}?v=4`;
+const ASSET = (path) => `assets/${path}?v=5`;
 
 function formatDuration(totalSeconds) {
   const safe = Math.max(0, Math.floor(totalSeconds));
