@@ -34,6 +34,9 @@ const BREATHE_OUTER_RADIUS = 390;
 const BREATHE_FORCE = 360;
 const BREATHE_REPEL_MS = 430;
 const RESTART_LOCK_MS = 2500;
+const HYDRATION_DURATION_MS = 7000;
+const MAX_BOTTLES = 3;
+const BOTTLE_SPAWN_INTERVAL_MS = 22000;
 
 const MEMES = [
   'PHOTOSYNTHESIS +1',
@@ -145,6 +148,7 @@ class MenuScene extends Phaser.Scene {
     this.load.image('logo_twitter', ASSET('corporate/twitter.svg'));
     this.load.image('enemy_hermes_walk1', ASSET('characters/hermes_walk1.png'));
     this.load.image('enemy_hermes_walk2', ASSET('characters/hermes_walk2.png'));
+    this.load.image('water_bottle', ASSET('items/water_bottle.svg'));
     this.load.audio('foot0', ASSET('audio/footstep_grass_000.ogg'));
     this.load.audio('foot1', ASSET('audio/footstep_grass_001.ogg'));
     this.load.audio('touch', ASSET('audio/touch.ogg'));
@@ -240,6 +244,8 @@ class GameScene extends Phaser.Scene {
     this.nextWorldUpdateAt = 0;
     this.nextGrassMaintainAt = 0;
     this.nextThreatMaintainAt = 0;
+    this.hydratingUntil = 0;
+    this.lastBottleSpawnAt = 0;
     this.playerSpeed = PLAYER_BASE_SPEED;
     this.chunks = new Map();
 
@@ -266,12 +272,14 @@ class GameScene extends Phaser.Scene {
 
     this.grass = this.physics.add.group({ allowGravity: false, immovable: true });
     this.corporateEnemies = this.physics.add.group({ allowGravity: false });
+    this.waterBottles = this.physics.add.group({ allowGravity: false, immovable: true });
 
     this.updateWorldChunks(true);
     for (let i = 0; i < 9; i += 1) this.spawnCorporateEnemy();
 
     this.physics.add.overlap(this.player, this.grass, (_, tuft) => this.collectGrass(tuft));
     this.physics.add.overlap(this.player, this.corporateEnemies, (_, hazard) => this.takeDamage(hazard));
+    this.physics.add.overlap(this.player, this.waterBottles, (_, bottle) => this.collectWaterBottle(bottle));
 
     this.keys = this.input.keyboard.addKeys('W,A,S,D,SHIFT,R,SPACE');
     this.ctrlKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
@@ -631,6 +639,51 @@ class GameScene extends Phaser.Scene {
       repeat: -1,
       ease: 'Sine.inOut',
     });
+  }
+
+  spawnWaterBottle() {
+    if (this.waterBottles.getLength() >= MAX_BOTTLES) return;
+    const { x, y } = this.randomSpawnPointNearEdge(60);
+    const bottle = this.physics.add.image(x, y, 'water_bottle')
+      .setDisplaySize(36, 48)
+      .setDepth(85)
+      .setAlpha(0.92);
+    bottle.body.setAllowGravity(false);
+    bottle.body.setSize(28, 38, true);
+    this.waterBottles.add(bottle);
+    this.tweens.add({
+      targets: bottle,
+      angle: 12,
+      scaleX: 1.08,
+      scaleY: 1.08,
+      duration: 640,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
+  }
+
+  collectWaterBottle(bottle) {
+    if (!bottle.active || bottle.getData('picked') || this.gameEnded) return;
+    bottle.setData('picked', true);
+    this.hydratingUntil = this.now() + HYDRATION_DURATION_MS;
+    this.combo = Math.min(99, this.combo + 2);
+    this.bestCombo = Math.max(this.bestCombo, this.combo);
+    this.sound.play('touch', { volume: 0.35, detune: 400 });
+    this.floatText(this.player.x, this.player.y - 60, 'HYDRATING!', '#4dc9f6', 26);
+    this.cameras.main.flash(120, 77, 201, 246, false);
+    this.player.setTint(0x7ad8ff);
+    this.tweens.add({
+      targets: bottle,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      angle: bottle.angle + 120,
+      duration: 220,
+      ease: 'Back.in',
+      onComplete: () => bottle.destroy(),
+    });
+    this.refreshHud();
   }
 
   aimHazardAtPlayer(hazard, speed, jitter = 0) {
@@ -1020,6 +1073,27 @@ class GameScene extends Phaser.Scene {
 
   takeDamage(hazard) {
     if (this.gameEnded) return;
+
+    // During hydration, enemies are destroyed on contact
+    if (this.now() < this.hydratingUntil) {
+      if (hazard?.body) {
+        const profile = getCorporateEnemyProfile(hazard?.getData('type') ?? 'youtube');
+        this.floatText(hazard.x, hazard.y - 30, 'HYDRATED!', '#4dc9f6', 18);
+        this.cameras.main.shake(80, 0.004);
+        this.tweens.add({
+          targets: hazard,
+          scaleX: 1.8,
+          scaleY: 1.8,
+          alpha: 0,
+          angle: hazard.angle + Phaser.Math.Between(-90, 90),
+          duration: 250,
+          ease: 'Cubic.out',
+          onComplete: () => hazard.destroy(),
+        });
+      }
+      return;
+    }
+
     if (this.now() < this.invulnerableUntil) {
       this.repelHazard(hazard, 340, 520);
       return;
@@ -1085,7 +1159,10 @@ class GameScene extends Phaser.Scene {
   refreshHud() {
     if (!this.scoreText || !this.timerText || !this.meterBar) return;
     this.scoreText.setText(`score: ${this.score}   combo: x${Math.max(1, this.combo)}`);
-    this.timerText.setText(`survived: ${formatDuration(this.survivalTime)}`);
+    const hydrating = this.hydratingUntil > 0 && this.now() < this.hydratingUntil;
+    const hydrateRemaining = hydrating ? Math.max(0, (this.hydratingUntil - this.now()) / 1000) : 0;
+    const hydrateSuffix = hydrating ? `   💧 ${hydrateRemaining.toFixed(1)}s` : '';
+    this.timerText.setText(`survived: ${formatDuration(this.survivalTime)}${hydrateSuffix}`);
     const chillPct = Phaser.Math.Clamp(this.chill, 0, 100);
     const barW = (this._meterW || 330) * (chillPct / 100);
     const barH = this._narrow ? 10 : 16;
@@ -1144,6 +1221,11 @@ class GameScene extends Phaser.Scene {
     const despawnDistance = 2500 + Math.min(760, pressure * 13);
     this.corporateEnemies.getChildren().forEach((hazard) => {
       if (Phaser.Math.Distance.Between(hazard.x, hazard.y, this.player.x, this.player.y) > despawnDistance) hazard.destroy();
+    });
+
+    // Cull distant water bottles
+    this.waterBottles.getChildren().forEach((bottle) => {
+      if (Phaser.Math.Distance.Between(bottle.x, bottle.y, this.player.x, this.player.y) > despawnDistance) bottle.destroy();
     });
 
     const burst = 1 + Math.floor(Math.min(5, pressure / 27));
@@ -1208,6 +1290,19 @@ class GameScene extends Phaser.Scene {
 
     this.updateStraightRun(time, vx, vy);
     this.chill = Math.max(0, this.chill - dt * this.getChillDrainRate(time));
+
+    // Water bottle spawning
+    if (time - this.lastBottleSpawnAt > BOTTLE_SPAWN_INTERVAL_MS) {
+      this.lastBottleSpawnAt = time;
+      this.spawnWaterBottle();
+    }
+
+    // Hydration expiration
+    if (this.hydratingUntil > 0 && time >= this.hydratingUntil) {
+      this.hydratingUntil = 0;
+      this.player.clearTint();
+      this.floatText(this.player.x, this.player.y - 54, 'DEHYDRATED', '#ffb38f', 20);
+    }
 
     if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || Phaser.Input.Keyboard.JustDown(this.ctrlKey) || window.__GTS_MINPUT__?.breathe) {
       if (window.__GTS_MINPUT__) window.__GTS_MINPUT__.breathe = false;
