@@ -667,6 +667,7 @@ class GameScene extends Phaser.Scene {
     if (!bottle.active || bottle.getData('picked') || this.gameEnded) return;
     bottle.setData('picked', true);
     this.hydratingUntil = this.now() + HYDRATION_DURATION_MS;
+    this.chill = 100;
     this.combo = Math.min(99, this.combo + 2);
     this.bestCombo = Math.max(this.bestCombo, this.combo);
     this.sound.play('touch', { volume: 0.35, detune: 400 });

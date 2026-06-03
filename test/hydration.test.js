@@ -65,8 +65,9 @@ describe('bottle collection triggers hydration', () => {
     assert.match(mainSrc, /this\.physics\.add\.overlap\(this\.player,\s*this\.waterBottles/);
   });
 
-  it('sets hydratingUntil on collection', () => {
+  it('sets hydratingUntil and restores chill to full on collection', () => {
     assert.match(mainSrc, /hydratingUntil\s*=\s*this\.now\(\)\s*\+\s*HYDRATION_DURATION_MS/);
+    assert.match(mainSrc, /this\.chill\s*=\s*100\s*;/);
   });
 
   it('floats HYDRATING! text on collection', () => {
