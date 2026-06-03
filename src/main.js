@@ -1,4 +1,19 @@
 import Phaser from 'phaser';
+import {
+  PLAYER_BASE_SPEED,
+  STRAIGHT_ANGLE_EPS,
+  STRAIGHT_GRACE_MS,
+  getChillDrainRate as calculateChillDrainRate,
+  getNoGrassSeconds as calculateNoGrassSeconds,
+  getPlayerSpeed as calculatePlayerSpeed,
+  getPressure as calculatePressure,
+  getSpeedChillDrainMultiplier,
+} from './balance.js';
+import {
+  MAX_GRASS,
+  getChunkGrassCount,
+  getPostCollectGrassSpawnCount,
+} from './grass-density.js';
 import './style.css';
 
 const GAME_W = 1376;
@@ -6,25 +21,12 @@ const GAME_H = 768;
 const CHUNK_SIZE = 900;
 const CHUNK_RADIUS = 2;
 const CHUNK_CULL_RADIUS = 3;
-const STARTING_GRASS = 30;
-const MAX_GRASS = 72;
 const MAX_HERMES = 64;
 const MAX_PHONES = 68;
-const PLAYER_BASE_SPEED = 225;
-const PLAYER_SPEED_PER_SCORE = 1.45;
-const PLAYER_SPEED_PER_SECOND = 0.21;
-const PLAYER_SPEED_CAP = 560;
 const BREATHE_CORE_RADIUS = 210;
 const BREATHE_OUTER_RADIUS = 390;
 const BREATHE_FORCE = 360;
 const BREATHE_REPEL_MS = 430;
-const GRASS_TOUCH_GRACE_MS = 750;
-const NO_GRASS_DRAIN_PER_SEC = 1.05;
-const NO_GRASS_DRAIN_CAP = 8.5;
-const STRAIGHT_GRACE_MS = 1100;
-const STRAIGHT_ANGLE_EPS = 0.24;
-const STRAIGHT_DRAIN_PER_SEC = 0.82;
-const STRAIGHT_DRAIN_CAP = 5.6;
 const RESTART_LOCK_MS = 2500;
 
 const MEMES = [
@@ -357,7 +359,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // Grass tufts — pre-generated per chunk so grass exists before the player arrives.
-    const grassCount = randInt(rng, 3, 5);
+    const grassCount = getChunkGrassCount(rng);
     const grassKeys = ['tuft_0', 'tuft_1', 'tuft_2', 'tuft_3'];
     const grassTints = [0x74c857, 0x93d867, 0xb7e66f, 0x5eac48];
     for (let i = 0; i < grassCount; i += 1) {
@@ -444,19 +446,15 @@ class GameScene extends Phaser.Scene {
   }
 
   getPressure() {
-    return this.score * 0.42 + this.survivalTime * 0.055;
+    return calculatePressure({ score: this.score, survivalTime: this.survivalTime });
   }
 
   getPlayerSpeed() {
-    return Math.min(
-      PLAYER_SPEED_CAP,
-      PLAYER_BASE_SPEED + this.score * PLAYER_SPEED_PER_SCORE + this.survivalTime * PLAYER_SPEED_PER_SECOND,
-    );
+    return calculatePlayerSpeed({ score: this.score, survivalTime: this.survivalTime });
   }
 
   getNoGrassSeconds(time = this.now()) {
-    const lastTouch = this.lastGrassTouchAt ?? time;
-    return Math.max(0, (time - lastTouch - GRASS_TOUCH_GRACE_MS) / 1000);
+    return calculateNoGrassSeconds({ time, lastGrassTouchAt: this.lastGrassTouchAt });
   }
 
   updateStraightRun(time, vx, vy) {
@@ -490,13 +488,13 @@ class GameScene extends Phaser.Scene {
   }
 
   getChillDrainRate(time = this.now()) {
-    const pressure = this.getPressure();
-    const noGrassSeconds = this.getNoGrassSeconds(time);
-    const straightSeconds = this.getStraightRunSeconds(time);
-    const baseline = 0.95 + pressure * 0.018;
-    const noGrassPenalty = Math.min(NO_GRASS_DRAIN_CAP, noGrassSeconds * NO_GRASS_DRAIN_PER_SEC);
-    const straightPenalty = Math.min(STRAIGHT_DRAIN_CAP, straightSeconds * STRAIGHT_DRAIN_PER_SEC);
-    return baseline + noGrassPenalty + straightPenalty;
+    return calculateChillDrainRate({
+      score: this.score,
+      survivalTime: this.survivalTime,
+      playerSpeed: this.playerSpeed || this.getPlayerSpeed(),
+      noGrassSeconds: this.getNoGrassSeconds(time),
+      straightSeconds: this.getStraightRunSeconds(time),
+    });
   }
 
   capThreatSpeed(speed, ratio = 0.94) {
@@ -871,7 +869,7 @@ class GameScene extends Phaser.Scene {
     });
 
     const pressure = this.getPressure();
-    this.spawnGrass(2 + (pressure > 50 ? 1 : 0), 200, 1900);
+    this.spawnGrass(getPostCollectGrassSpawnCount(pressure, Math.random), 200, 1900);
     if (this.score % 4 === 0) this.spawnHermes();
     if (this.score % 5 === 0) this.spawnPhone();
     if (this.score % 12 === 0) {
@@ -969,6 +967,7 @@ class GameScene extends Phaser.Scene {
       survived: Number(this.survivalTime.toFixed(1)),
       playerSpeed: Math.round(this.playerSpeed),
       threatSpeed: Math.round(this.getThreatSpeed()),
+      speedDrainMultiplier: Number(getSpeedChillDrainMultiplier(this.playerSpeed || this.getPlayerSpeed()).toFixed(2)),
       noGrassSeconds: Number(this.getNoGrassSeconds(this.now()).toFixed(1)),
       straightRunSeconds: Number(this.getStraightRunSeconds(this.now()).toFixed(1)),
       chillDrainRate: Number(this.getChillDrainRate(this.now()).toFixed(2)),
