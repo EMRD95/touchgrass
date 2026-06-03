@@ -57,7 +57,7 @@ const HAZARD_MEMES = [
   'SERVER PINGED YOUR SOUL',
 ];
 
-const ASSET = (path) => `assets/${path}?v=3`;
+const ASSET = (path) => `assets/${path}?v=4`;
 
 function formatDuration(totalSeconds) {
   const safe = Math.max(0, Math.floor(totalSeconds));
@@ -143,6 +143,8 @@ class MenuScene extends Phaser.Scene {
     this.load.image('logo_teams', ASSET('corporate/teams.svg'));
     this.load.image('logo_whatsapp', ASSET('corporate/whatsapp.svg'));
     this.load.image('logo_twitter', ASSET('corporate/twitter.svg'));
+    this.load.image('enemy_hermes_walk1', ASSET('characters/hermes_walk1.png'));
+    this.load.image('enemy_hermes_walk2', ASSET('characters/hermes_walk2.png'));
     this.load.audio('foot0', ASSET('audio/footstep_grass_000.ogg'));
     this.load.audio('foot1', ASSET('audio/footstep_grass_001.ogg'));
     this.load.audio('touch', ASSET('audio/touch.ogg'));
@@ -254,6 +256,9 @@ class GameScene extends Phaser.Scene {
 
     if (!this.anims.exists('player_walk')) {
       this.anims.create({ key: 'player_walk', frames: [{ key: 'player_walk1' }, { key: 'player_walk2' }], frameRate: 7, repeat: -1 });
+    }
+    if (!this.anims.exists('hermes_walk')) {
+      this.anims.create({ key: 'hermes_walk', frames: [{ key: 'enemy_hermes_walk1' }, { key: 'enemy_hermes_walk2' }], frameRate: 6, repeat: -1 });
     }
 
     this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
@@ -584,12 +589,22 @@ class GameScene extends Phaser.Scene {
     const pressure = this.getPressure();
     const strategy = getCorporateStrategy(profile, Math.random);
     const displaySize = profile.size + Math.min(9, pressure / 85);
-    const enemy = this.physics.add.image(x, y, profile.textureKey)
-      .setDisplaySize(displaySize, displaySize)
+    const displayWidth = (profile.displayWidth ?? profile.size) + Math.min(9, pressure / 85);
+    const displayHeight = (profile.displayHeight ?? profile.size) + Math.min(9, pressure / 85);
+    const enemy = profile.animationKey
+      ? this.physics.add.sprite(x, y, profile.textureKey)
+      : this.physics.add.image(x, y, profile.textureKey);
+    enemy
+      .setDisplaySize(displayWidth || displaySize, displayHeight || displaySize)
       .setDepth(95)
       .setAlpha(0.98);
+    if (profile.defaultFlipX !== undefined) enemy.setFlipX(profile.defaultFlipX);
+    if (profile.animationKey) {
+      enemy.play(profile.animationKey);
+      enemy.anims.timeScale = profile.animationTimeScale ?? 1;
+    }
     enemy.body.setAllowGravity(false);
-    enemy.body.setSize(profile.bodySize, profile.bodySize, true);
+    enemy.body.setSize(profile.bodyWidth ?? profile.bodySize, profile.bodyHeight ?? profile.bodySize, true);
     enemy.setData('type', profile.type);
     enemy.setData('label', profile.label);
     enemy.setData('strategy', strategy);
@@ -1245,6 +1260,11 @@ class GameScene extends Phaser.Scene {
         y: enemy.getData('targetY') ?? this.player.y,
       };
       this.moveHazardToward(enemy, target, threatSpeed);
+      // Restore original Hermes walking animation: dynamic flip + timeScale
+      if (profile.animationKey) {
+        enemy.setFlipX(enemy.body.velocity.x >= 0);
+        enemy.anims.timeScale = Math.min(2.8, 1 + pressure / 62);
+      }
     });
   }
 
