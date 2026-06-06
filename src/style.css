@@ -48,7 +48,7 @@ body {
   image-rendering: auto !important;
 }
 
-/* ── Breathe button ───────────────────────────── */
+/* Breathe button */
 #btn-breathe {
   display: none;
   position: fixed;

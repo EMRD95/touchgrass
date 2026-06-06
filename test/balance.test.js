@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  PLAYER_BASE_SPEED,
-  PLAYER_SPEED_CAP,
   getChillDrainRate,
   getPlayerSpeed,
   getSpeedChillDrainMultiplier,
-} from '../src/balance.js';
+  getTargetCorporateEnemyCount,
+  getWaveEnemyBurstCount,
+} from '../src/utils/helpers.js';
+import {
+  PLAYER_BASE_SPEED,
+  PLAYER_SPEED_CAP,
+} from '../src/utils/constants.js';
 
 test('player speed progression is capped at the declared maximum', () => {
   assert.equal(getPlayerSpeed({ score: 0, survivalTime: 0 }), PLAYER_BASE_SPEED);
@@ -41,4 +45,11 @@ test('speed matching scales the full drain stack, including no-grass and straigh
   const fastDrain = getChillDrainRate({ ...penaltyState, playerSpeed: PLAYER_SPEED_CAP });
 
   assert.ok(fastDrain >= baseDrain * 1.85, `expected fast penalty drain ${fastDrain} to scale with base penalty drain ${baseDrain}`);
+});
+
+test('wave 5 pressure stays playable instead of becoming a wall of enemies', () => {
+  const wave5Approx = { score: 42, survivalTime: 116 };
+  const target = getTargetCorporateEnemyCount(wave5Approx);
+  assert.ok(target <= 24, `wave 5 should target at most 24 enemies, got ${target}`);
+  assert.ok(getWaveEnemyBurstCount(5) <= 1, 'wave 5 should add tension without dumping multiple extra enemies at once');
 });
